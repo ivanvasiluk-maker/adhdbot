@@ -24,7 +24,7 @@ from aiogram.types import Message, CallbackQuery, KeyboardButton, ReplyKeyboardM
 from aiogram.client.default import DefaultBotProperties
 from aiogram.filters import CommandStart
 from aiogram.enums import ParseMode
-from dotenv import load_dotenv
+from openai import OpenAI
 
 # Import modules
 from texts import (
@@ -56,15 +56,24 @@ from flows import (
     _extract_json, clamp_str
 )
 
-load_dotenv(override=True)
-
 # ============================================================
 # CONFIG
 # ============================================================
 
+logging.basicConfig(level=logging.INFO)
+log = logging.getLogger("bot")
+
 BOT_TOKEN = os.getenv("BOT_TOKEN", "").strip()
-OPENAI_API_KEY = os.getenv("OPENAI_API_KEY", "").strip()
-OPENAI_CHAT_MODEL = os.getenv("OPENAI_CHAT_MODEL", "gpt-4o-mini").strip()
+OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
+
+if not OPENAI_API_KEY:
+    logging.error("❌ OPENAI_API_KEY НЕ НАЙДЕН В ENV!")
+else:
+    logging.info(f"✅ OPENAI_API_KEY загружен (длина={len(OPENAI_API_KEY)})")
+
+client = OpenAI(api_key=OPENAI_API_KEY)
+
+OPENAI_CHAT_MODEL = os.getenv("OPENAI_CHAT_MODEL", "gpt-4o-mini")
 OPENAI_WHISPER_MODEL = os.getenv("OPENAI_WHISPER_MODEL", "whisper-1").strip()
 DB_PATH = os.getenv("DB_PATH", "bot.db").strip()
 PAYMENT_URL = os.getenv("PAYMENT_URL", "").strip()
@@ -77,28 +86,8 @@ TEST_MODE = os.getenv("TEST_MODE", "").lower() in {"1", "true", "yes", "on", "de
 
 AI_ANALYSIS_ENABLED = bool(OPENAI_API_KEY)
 
-# Logging
-logging.basicConfig(level=logging.INFO)
-log = logging.getLogger("bot")
-
 print(f"BOT_TOKEN: {repr(BOT_TOKEN)}")
 print(f"DB_PATH: {DB_PATH}")
-
-# OpenAI client
-openai = None
-client = None
-if AI_ANALYSIS_ENABLED:
-    try:
-        import openai as oa
-        openai = oa
-        client = openai.OpenAI(api_key=OPENAI_API_KEY)
-    except Exception as e:
-        print(f"⚠️  OpenAI import failed: {e}")
-        client = None
-        AI_ANALYSIS_ENABLED = False
-        openai = None
-    if openai is None:
-        print("⚠️  OpenAI import unavailable, continuing without AI features")
 
 
 async def ai_micro_reflect(user_text: str, trainer_key: str, client=None, model: str = "gpt-4o-mini") -> str:
@@ -148,6 +137,31 @@ async def ai_micro_reflect(user_text: str, trainer_key: str, client=None, model:
 # ============================================================
 
 router = Router()
+
+
+@router.message(F.text == "/aitest")
+async def ai_test(m: Message):
+    try:
+        logging.info("🔥 AI TEST START")
+
+        resp = client.chat.completions.create(
+            model=OPENAI_CHAT_MODEL,
+            messages=[
+                {"role": "user", "content": "Ответь ровно: AI работает"}
+            ],
+            temperature=0,
+            max_tokens=20,
+        )
+
+        text = resp.choices[0].message.content if resp.choices else "empty"
+
+        logging.info(f"🔥 AI TEST OK: {text}")
+
+        await m.answer(f"✅ {text}")
+
+    except Exception as e:
+        logging.exception("❌ AI TEST ERROR")
+        await m.answer(f"❌ AI error: {e}")
 
 @router.message(CommandStart())
 async def cmd_start(m: Message):
