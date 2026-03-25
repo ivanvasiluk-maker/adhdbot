@@ -10,7 +10,7 @@ import logging
 import os
 from typing import Dict, Any, Optional, List
 import aiosqlite
-from aiogram.types import Message, InputFile, KeyboardButton, ReplyKeyboardMarkup
+from aiogram.types import Message, FSInputFile, KeyboardButton, ReplyKeyboardMarkup
 from aiogram import Bot
 
 from texts import (
@@ -44,7 +44,7 @@ async def send_trainer_photo_if_any(chat_id: int, trainer_key: str, bot_token: s
     import os
     import logging
     from aiogram import Bot
-    from aiogram.types import InputFile
+    from aiogram.types import FSInputFile
     base = os.path.join(os.path.dirname(__file__), "images", trainer_key)
     for ext in ("jpg", "jpeg", "png", "webp"):  # ищем любой формат
         for fname in os.listdir(base):
@@ -52,7 +52,7 @@ async def send_trainer_photo_if_any(chat_id: int, trainer_key: str, bot_token: s
                 path = os.path.join(base, fname)
                 try:
                     b = Bot(token=bot_token)
-                    await b.send_photo(chat_id, InputFile(path))
+                    await b.send_photo(chat_id, FSInputFile(path))
                     await b.session.close()
                     logging.info(f"[PHOTO] Sent trainer photo: {path} to chat {chat_id}")
                     return
