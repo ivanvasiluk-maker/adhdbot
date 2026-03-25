@@ -439,18 +439,44 @@ async def main_flow(m: Message):
 
     # analysis_map
     if u.get("stage") == "analysis_map":
-        low = (text or "").lower()
-        if "принимаю" in low or "принимают" in low:
+        low = (text or "").lower().strip()
+
+        if text == "📜 Принимаю план" or "принимаю" in low:
             u["stage"] = "training"
             u["day"] = 1
             await save_user(u, DB_PATH)
             await log_event(u["user_id"], "analysis", "day1_started", {}, DB_PATH, SHEETS_WEBHOOK_URL)
-            # Явно запускаем первый день
             await start_day(m, u, 1, DB_PATH, SHEETS_WEBHOOK_URL)
             return
-        if "нет" in low:
-            await m.answer("Ок. Без гарантии — не стартуем.")
+
+        if text == "🤔 Немного не так" or "не так" in low:
+            u["stage"] = "analysis_refine"
+            await save_user(u, DB_PATH)
+            await m.answer(
+                "Ок, уточни коротко, что не так в разборе.\n"
+                "Например: «это не тревога, а скука», «главная проблема — вход в задачу», "
+                "«я отвлекаюсь не всегда, а только перед сложной работой»."
+            )
             return
+
+        if text == "❌ Нет" or low == "нет":
+            await m.answer("Ок. Напиши коротко, что не совпало в плане.")
+            u["stage"] = "analysis_refine"
+            await save_user(u, DB_PATH)
+            return
+
+        await m.answer(
+            "Выбери кнопку 👇",
+            reply_markup=ReplyKeyboardMarkup(
+                keyboard=[
+                    [KeyboardButton(text="📜 Принимаю план")],
+                    [KeyboardButton(text="🤔 Немного не так")],
+                    [KeyboardButton(text="❌ Нет")],
+                ],
+                resize_keyboard=True
+            )
+        )
+        return
 
     # confirm_analysis
     if u["stage"] == "confirm_analysis":
