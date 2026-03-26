@@ -64,29 +64,33 @@ logging.basicConfig(level=logging.INFO)
 log = logging.getLogger("bot")
 
 BOT_TOKEN = os.getenv("BOT_TOKEN", "").strip()
-OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
+OPENAI_API_KEY = (os.getenv("OPENAI_API_KEY") or "").strip()
+OPENAI_CHAT_MODEL = (os.getenv("OPENAI_CHAT_MODEL") or "gpt-4o-mini").strip()
+OPENAI_WHISPER_MODEL = (os.getenv("OPENAI_WHISPER_MODEL") or "whisper-1").strip()
+DB_PATH = (os.getenv("DB_PATH") or "bot.db").strip()
+PAYMENT_URL = (os.getenv("PAYMENT_URL") or "").strip()
+PAYMENT_URL_DISCOUNT = (os.getenv("PAYMENT_URL_DISCOUNT") or "").strip()
+PAYMENT_URL_FULL = (os.getenv("PAYMENT_URL_FULL") or "").strip()
+SHEETS_WEBHOOK_URL = (os.getenv("SHEETS_WEBHOOK_URL") or "").strip()
+
+TEST_MODE = (os.getenv("TEST_MODE") or "").lower() in {"1", "true", "yes", "on", "debug"}
+
+AI_ANALYSIS_ENABLED = False
+client = None
 
 if not OPENAI_API_KEY:
-    logging.error("❌ OPENAI_API_KEY НЕ НАЙДЕН В ENV!")
+    log.warning("OPENAI_API_KEY not found; AI features disabled.")
 else:
-    logging.info(f"✅ OPENAI_API_KEY загружен (длина={len(OPENAI_API_KEY)})")
+    try:
+        client = OpenAI(api_key=OPENAI_API_KEY)
+        AI_ANALYSIS_ENABLED = True
+        log.info("OpenAI client initialized successfully.")
+    except Exception as e:
+        client = None
+        AI_ANALYSIS_ENABLED = False
+        log.exception("OpenAI client init failed: %s", e)
 
-client = OpenAI(api_key=OPENAI_API_KEY)
-
-OPENAI_CHAT_MODEL = os.getenv("OPENAI_CHAT_MODEL", "gpt-4o-mini")
-OPENAI_WHISPER_MODEL = os.getenv("OPENAI_WHISPER_MODEL", "whisper-1").strip()
-DB_PATH = os.getenv("DB_PATH", "bot.db").strip()
-PAYMENT_URL = os.getenv("PAYMENT_URL", "").strip()
-PAYMENT_URL_DISCOUNT = os.getenv("PAYMENT_URL_DISCOUNT", "").strip()
-PAYMENT_URL_FULL = os.getenv("PAYMENT_URL_FULL", "").strip()
-SHEETS_WEBHOOK_URL = os.getenv("SHEETS_WEBHOOK_URL", "").strip()
-
-# Unlock full flow while testing (set TEST_MODE=1)
-TEST_MODE = os.getenv("TEST_MODE", "").lower() in {"1", "true", "yes", "on", "debug"}
-
-AI_ANALYSIS_ENABLED = bool(OPENAI_API_KEY)
-
-print(f"BOT_TOKEN: {repr(BOT_TOKEN)}")
+print(f"BOT_TOKEN loaded: {bool(BOT_TOKEN)}")
 print(f"DB_PATH: {DB_PATH}")
 
 
@@ -163,6 +167,14 @@ async def ai_test(m: Message):
         logging.exception("❌ AI TEST ERROR")
         await m.answer(f"❌ AI error: {e}")
 
+
+@router.message(F.text == "/whispertest")
+async def whisper_test(m: Message):
+    u = await get_user(m.from_user.id, DB_PATH)
+    u["stage"] = "whisper_test_wait_voice"
+    await save_user(u, DB_PATH)
+    await m.answer("Пришли голосовое сообщение 🎙")
+
 @router.message(CommandStart())
 async def cmd_start(m: Message):
     uid = m.from_user.id
@@ -205,6 +217,19 @@ async def main_flow(m: Message):
         reply = await ai_micro_reflect(text or "", trainer_key, client, OPENAI_CHAT_MODEL)
         await log_event(u["user_id"], "training", "post_done_reflect", {"len": len(text or "")}, DB_PATH, SHEETS_WEBHOOK_URL)
         await m.answer(trainer_say(trainer_key, reply), reply_markup=kb_training_main)
+        return
+
+    if u.get("stage") == "whisper_test_wait_voice":
+        if not m.voice:
+            await m.answer("Пришли именно голосовое 🎙")
+            return
+
+        t = await whisper_transcribe(m)
+        if not t:
+            await m.answer("❌ Whisper не смог распознать голос.")
+            return
+
+        await m.answer(f"✅ Whisper:\n\n{t}")
         return
 
 
@@ -303,18 +328,6 @@ async def main_flow(m: Message):
         await m.answer("Выбери кнопкой 👇", reply_markup=kb_input_mode)
         return
 
-    # После карты навыков — запросить подтверждение и только потом стартовать День 1
-    if u.get("stage") == "diagnosis_done":
-        await m.answer(month_map_text(u.get("bucket")))
-        accept_kb = ReplyKeyboardMarkup(
-            keyboard=[[KeyboardButton(text="📜 Принимаю план")], [KeyboardButton(text="❌ Нет")]],
-            resize_keyboard=True
-        )
-        u["stage"] = "analysis_map"
-        await save_user(u, DB_PATH)
-        await m.answer("Принять этот план и начать День 1?", reply_markup=accept_kb)
-        return
-
     # choose_input_mode
     if u["stage"] == "choose_input_mode":
         low = text.lower().strip()
@@ -345,53 +358,22 @@ async def main_flow(m: Message):
     # await_problem_text
     if u["stage"] == "await_problem_text":
         if not text or text.lower() == "пропустить":
-            user_text = "Прокрастинация/избегание,хочу начать, но откладываю."
+            user_text = "Прокрастинация/избегание, хочу начать, но откладываю."
         else:
             user_text = text
+
         u["analysis_json"] = json.dumps({"user_text": clamp_str(user_text, 1000)}, ensure_ascii=False)
         u["stage"] = "run_analysis"
         await save_user(u, DB_PATH)
+
         await m.answer("Ок. Быстрый разбор…")
         await run_analysis(m, u, user_text, DB_PATH, SHEETS_WEBHOOK_URL, client, OPENAI_CHAT_MODEL)
-        # После анализа — явно завершаем стадию
-        u["stage"] = "diagnosis_done"
-        await save_user(u, DB_PATH)
-        # Подробный разбор после кейса
-        patterns = [
-            {
-                "name": "Прокрастинация",
-                "desc": "Откладывание важных задач",
-                "manifest": "Задачи не стартуют вовремя, появляется чувство вины"
-            },
-            {
-                "name": "Тревожный цикл",
-                "desc": "Избегание из-за страха ошибки",
-                "manifest": "Есть ощущение, что не получится, поэтому не начинаешь"
-            },
-            {
-                "name": "Отвлечения",
-                "desc": "Частые переключения внимания",
-                "manifest": "Внимание уходит на телефон, соцсети, мелкие дела"
-            }
-        ]
-        missing_skills = [
-            "Навык запуска (старт задачи)",
-            "Навык удержания внимания",
-            "Навык управления тревогой"
-        ]
-        detailed_text = "🔎 Подробный разбор:\n\n"
-        detailed_text += "Паттерны поведения и их проявления:\n"
-        for p in patterns:
-            detailed_text += f"• {p['name']} — {p['desc']}\n  Как проявляется: {p['manifest']}\n"
-        detailed_text += "\nКаких навыков не хватает:\n"
-        detailed_text += "\n".join([f"• {s}" for s in missing_skills])
-        await m.answer(detailed_text)
         return
 
     # await_problem_voice
     if u["stage"] == "await_problem_voice":
         if text and text.lower() == "назад":
-            u["stage"] = "choose_input_mode"
+            u["stage"] = "await_input_mode"
             await save_user(u, DB_PATH)
             await m.answer("Ок. Выбери режим:", reply_markup=kb_input_mode)
             return
@@ -460,9 +442,9 @@ async def main_flow(m: Message):
             return
 
         if text == "❌ Нет" or low == "нет":
-            await m.answer("Ок. Напиши коротко, что не совпало в плане.")
             u["stage"] = "analysis_refine"
             await save_user(u, DB_PATH)
+            await m.answer("Ок. Напиши коротко, что не совпало в плане.")
             return
 
         await m.answer(
@@ -473,8 +455,8 @@ async def main_flow(m: Message):
                     [KeyboardButton(text="🤔 Немного не так")],
                     [KeyboardButton(text="❌ Нет")],
                 ],
-                resize_keyboard=True
-            )
+                resize_keyboard=True,
+            ),
         )
         return
 

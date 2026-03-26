@@ -24,14 +24,14 @@ python -m venv venv
 ```powershell
 pip install -r requirements.txt
 ```
-3) Copy `.env.example` to `.env` and fill values (see below).
+3) Set environment variables (e.g., via Railway/Render/Heroku Variables). For local dev you can export them or use a local `.env` if you prefer; production should rely on platform vars.
 4) Run the bot:
 ```powershell
 python bot.py
 ```
 
 ## Environment variables
-Create a `.env` file in the project root:
+Env vars (set in your platform/terminal):
 ```
 BOT_TOKEN=your-telegram-bot-token
 OPENAI_API_KEY=your-openai-key-optional
@@ -66,4 +66,4 @@ docker run --env-file .env adhd-bot
 ## Troubleshooting
 - If `BOT_TOKEN` is missing, startup raises a runtime error.
 - If OpenAI import fails, the bot logs a warning and continues without AI features.
-- Ensure `.env` is in the working directory you run from; `load_dotenv(override=True)` is called early in [bot.py](bot.py).
+- Configure env vars in your hosting (Railway/Render/Heroku/etc.). For local runs you may still source a `.env`, but production should rely on platform vars; `bot.py` reads from the environment directly.
