@@ -959,24 +959,47 @@ async def show_comprehensive_analysis(m: Message, u: Dict[str, Any]):
 
 async def whisper_transcribe(m: Message) -> Optional[str]:
     if not (AI_ANALYSIS_ENABLED and client):
+        log.warning("Whisper skipped: AI disabled or client is None")
         return None
+
     if not m.voice:
+        log.warning("Whisper skipped: no voice in message")
         return None
+
     try:
         file = await m.bot.get_file(m.voice.file_id)
+        log.info(f"Whisper file_path: {file.file_path}")
+
         fp = await m.bot.download_file(file.file_path)
         data = fp.read()
+
+        if not data:
+            log.warning("Whisper downloaded empty file")
+            return None
+
         import io
         bio = io.BytesIO(data)
         bio.name = "voice.ogg"
-        tr = client.audio.transcriptions.create(model=OPENAI_WHISPER_MODEL, file=bio)
+
+        log.info("Whisper request started")
+        tr = client.audio.transcriptions.create(
+            model=OPENAI_WHISPER_MODEL,
+            file=bio
+        )
+        log.info("Whisper response received")
+
         text = getattr(tr, "text", None)
         if not text:
             try:
                 text = tr["text"]
             except Exception:
                 text = None
-        return (text or "").strip() or None
+
+        text = (text or "").strip()
+        log.info(f"Whisper text: {text[:200]!r}")
+
+        return text or None
+
     except Exception as e:
         log.exception("whisper error: %s", e)
         return None
