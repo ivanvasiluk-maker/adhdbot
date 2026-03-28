@@ -63,7 +63,7 @@ from flows import (
 logging.basicConfig(level=logging.INFO)
 log = logging.getLogger("bot")
 
-BOT_TOKEN = os.getenv("BOT_TOKEN", "").strip()
+BOT_TOKEN = (os.getenv("BOT_TOKEN") or "").strip()
 OPENAI_API_KEY = (os.getenv("OPENAI_API_KEY") or "").strip()
 OPENAI_CHAT_MODEL = (os.getenv("OPENAI_CHAT_MODEL") or "gpt-4o-mini").strip()
 OPENAI_WHISPER_MODEL = (os.getenv("OPENAI_WHISPER_MODEL") or "whisper-1").strip()
@@ -75,11 +75,11 @@ SHEETS_WEBHOOK_URL = (os.getenv("SHEETS_WEBHOOK_URL") or "").strip()
 
 TEST_MODE = (os.getenv("TEST_MODE") or "").lower() in {"1", "true", "yes", "on", "debug"}
 
-AI_ANALYSIS_ENABLED = False
 client = None
+AI_ANALYSIS_ENABLED = False
 
 if not OPENAI_API_KEY:
-    log.warning("OPENAI_API_KEY not found; AI features disabled.")
+    log.warning("OPENAI_API_KEY not found; AI disabled.")
 else:
     try:
         client = OpenAI(api_key=OPENAI_API_KEY)
@@ -88,10 +88,13 @@ else:
     except Exception as e:
         client = None
         AI_ANALYSIS_ENABLED = False
-        log.exception("OpenAI client init failed: %s", e)
+        log.exception("OpenAI init failed: %s", e)
 
 print(f"BOT_TOKEN loaded: {bool(BOT_TOKEN)}")
 print(f"DB_PATH: {DB_PATH}")
+print(f"AI_ANALYSIS_ENABLED: {AI_ANALYSIS_ENABLED}")
+print(f"OPENAI_CHAT_MODEL: {OPENAI_CHAT_MODEL}")
+print(f"OPENAI_WHISPER_MODEL: {OPENAI_WHISPER_MODEL}")
 
 
 async def ai_micro_reflect(user_text: str, trainer_key: str, client=None, model: str = "gpt-4o-mini") -> str:
@@ -436,8 +439,8 @@ async def main_flow(m: Message):
             await save_user(u, DB_PATH)
             await m.answer(
                 "Ок, уточни коротко, что не так в разборе.\n"
-                "Например: «это не тревога, а скука», «главная проблема — вход в задачу», "
-                "«я отвлекаюсь не всегда, а только перед сложной работой»."
+                "Например: «это не тревога, а перегруз», «главная проблема — вход в задачу», "
+                "«я отвлекаюсь только перед сложной работой»."
             )
             return
 
