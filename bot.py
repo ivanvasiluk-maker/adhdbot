@@ -22,7 +22,7 @@ import aiosqlite
 from aiogram import Bot, Dispatcher, Router, F
 from aiogram.types import Message, CallbackQuery, KeyboardButton, ReplyKeyboardMarkup
 from aiogram.client.default import DefaultBotProperties
-from aiogram.filters import CommandStart
+from aiogram.filters import Command, CommandStart
 from aiogram.enums import ParseMode
 from openai import OpenAI
 
@@ -63,6 +63,8 @@ from flows import (
 logging.basicConfig(level=logging.INFO)
 log = logging.getLogger("bot")
 
+APP_VERSION = "2026-03-28-v3"
+
 BOT_TOKEN = (os.getenv("BOT_TOKEN") or "").strip()
 OPENAI_API_KEY = (os.getenv("OPENAI_API_KEY") or "").strip()
 OPENAI_CHAT_MODEL = (os.getenv("OPENAI_CHAT_MODEL") or "gpt-4o-mini").strip()
@@ -74,6 +76,8 @@ PAYMENT_URL_FULL = (os.getenv("PAYMENT_URL_FULL") or "").strip()
 SHEETS_WEBHOOK_URL = (os.getenv("SHEETS_WEBHOOK_URL") or "").strip()
 
 TEST_MODE = (os.getenv("TEST_MODE") or "").lower() in {"1", "true", "yes", "on", "debug"}
+
+log.info(f"APP_VERSION: {APP_VERSION}")
 
 client = None
 AI_ANALYSIS_ENABLED = False
@@ -146,37 +150,44 @@ async def ai_micro_reflect(user_text: str, trainer_key: str, client=None, model:
 router = Router()
 
 
-@router.message(F.text == "/aitest")
-async def ai_test(m: Message):
-    try:
-        logging.info("🔥 AI TEST START")
+@router.message(Command("version"))
+async def version_cmd(m: Message):
+    await m.answer(
+        f"version={APP_VERSION}\n"
+        f"ai_enabled={AI_ANALYSIS_ENABLED}\n"
+        f"model={OPENAI_CHAT_MODEL}\n"
+        f"whisper={OPENAI_WHISPER_MODEL}"
+    )
 
+
+@router.message(Command("aitest"))
+async def ai_test(m: Message):
+    if not (AI_ANALYSIS_ENABLED and client):
+        await m.answer("❌ AI disabled")
+        return
+    try:
+        log.info(f"AI TEST START model={OPENAI_CHAT_MODEL}")
         resp = client.chat.completions.create(
             model=OPENAI_CHAT_MODEL,
-            messages=[
-                {"role": "user", "content": "Ответь ровно: AI работает"}
-            ],
+            messages=[{"role": "user", "content": "Ответь ровно: AI работает"}],
             temperature=0,
             max_tokens=20,
         )
-
         text = resp.choices[0].message.content if resp.choices else "empty"
-
-        logging.info(f"🔥 AI TEST OK: {text}")
-
+        log.info(f"AI TEST OK: {text}")
         await m.answer(f"✅ {text}")
-
     except Exception as e:
-        logging.exception("❌ AI TEST ERROR")
+        log.exception("AI TEST ERROR")
         await m.answer(f"❌ AI error: {e}")
 
 
-@router.message(F.text == "/whispertest")
+@router.message(Command("whispertest"))
 async def whisper_test(m: Message):
     u = await get_user(m.from_user.id, DB_PATH)
     u["stage"] = "whisper_test_wait_voice"
     await save_user(u, DB_PATH)
     await m.answer("Пришли голосовое сообщение 🎙")
+
 
 @router.message(CommandStart())
 async def cmd_start(m: Message):
@@ -198,6 +209,7 @@ async def cmd_start(m: Message):
         "Привет! Я тренер навыков саморегуляции. Как тебя зовут? (1 слово)",
         reply_markup=ReplyKeyboardMarkup(keyboard=[[KeyboardButton(text="Пропустить")]], resize_keyboard=True),
     )
+
 
 @router.message()
 async def main_flow(m: Message):
