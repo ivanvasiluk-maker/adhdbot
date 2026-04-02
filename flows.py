@@ -474,19 +474,19 @@ async def ai_analyze_comprehensive(user_text: str, trainer_key: str = "marsha", 
     from texts import AI_ANALYSIS_SYSTEM_PROMPT
     
     if not (client and model):
-        # fallback comprehensive response
+        log.warning("ai_analyze_comprehensive fallback: no client or model")
         return {
             "bucket": "mixed",
-            "short_summary": "Похоже, ты сталкиваешься с несколькими вызовами сразу: тревога мешает начать, внимание сложно удержать.",
-            "what_is_happening": "Тебе сложно начать важное дело и удержать на нём внимание. Сначала переживаешь или откладываешь, потом отвлекаешься.",
-            "why_it_happens": "Мозг ищет более лёгкую стимуляцию и избегает дискомфорта начала. Это не лень — это автоматический защитный паттерн.",
-            "not_your_fault_or_control_zone": "Это не твоя вина и не слабость. Это навык, который пока не натренирован. Ты можешь это изменить.",
-            "why_change_is_possible": "Навыки саморегуляции, начала и удержания внимания поддаются тренировке. В течение 4–8 недель увидишь реальные сдвиги.",
-            "training_path": "Мы будем двигаться маленькими шагами, без перегруза. Сначала натренируем одно, потом подключим другое.",
-            "skills_focus": ["начало без давления", "удержание внимания", "возврат без самокритики"],
-            "timeline": "Первые сдвиги - 2–3 недели. Устойчивость - 4–8 недель.",
-            "support_guarantee": "Если метод не подойдёт - мы его заменим. Ты не один(а).",
-            "closing_reassurance": "Это работает. И ты справишься."
+            "short_summary": "Похоже, у тебя смешанный профиль: вход в задачу тяжёлый, есть тревога и отвлекаемость.",
+            "what_is_happening": "Тебе сложно начинать важные дела, а когда возникает напряжение, внимание быстро уходит в более лёгкие стимулы.",
+            "why_it_happens": "Мозг уходит от дискомфорта старта и выбирает более быструю разрядку — видео, переключения, доработки без конца.",
+            "not_your_fault_or_control_zone": "Это не про слабость характера. Это паттерн саморегуляции, который можно перестроить.",
+            "why_change_is_possible": "Если тренировать запуск, удержание и возврат, поведение начинает меняться довольно заметно.",
+            "training_path": "Сначала упрощаем старт, потом учим мозг не убегать, потом укрепляем возврат без самонаказания.",
+            "skills_focus": ["запуск", "удержание внимания", "возврат без самокритики"],
+            "timeline": "Первые сдвиги обычно заметны за 2–3 недели, устойчивость — за 4–8 недель.",
+            "support_guarantee": "Если навык не подойдёт, маршрут можно поменять.",
+            "closing_reassurance": "Это не тупик. Это тренируется."
         }
 
     system = AI_ANALYSIS_SYSTEM_PROMPT
@@ -555,39 +555,40 @@ async def ai_analyze_comprehensive(user_text: str, trainer_key: str = "marsha", 
 async def run_analysis(m: Message, u: Dict[str, Any], user_text: str, db_path: str, sheets_webhook: str = "", client=None, model: str = "gpt-4o-mini"):
     """Запустить анализ"""
     from texts import kb_analysis_confirm
-    
-    # Try quick analysis first (keeps fallback behavior)
-    r = await ai_analyze(user_text, client, model)
 
-    # Attempt to get a comprehensive analysis (may fallback internally)
+    r = await ai_analyze(user_text, client, model)
     comp = await ai_analyze_comprehensive(user_text, u.get("trainer_key", "marsha"), client, model)
 
-    # Prefer comprehensive bucket if present
     bucket = comp.get("bucket") or r.get("bucket") or "mixed"
     u["bucket"] = bucket
 
-    # Save full analysis (include user_text for reference)
     comp_to_store = dict(comp)
     comp_to_store["user_text"] = clamp_str(user_text, 1000)
     u["analysis_json"] = json.dumps(comp_to_store, ensure_ascii=False)
 
-    # build plan (28 days)
     plan_ids = build_28_day_plan(bucket)
     u["plan_json"] = json.dumps(plan_ids, ensure_ascii=False)
     u["day"] = 1
-
-    # set stage to confirm comprehensive analysis and persist
     u["stage"] = "confirm_analysis"
-    await save_user(u, db_path)
 
-    # Log that analysis was shown
+    await save_user(u, db_path)
     await log_event(u["user_id"], "analysis", "analysis_shown", {"bucket": u.get("bucket")}, db_path, sheets_webhook)
 
-    # Short selling text + buttons (matches comprehensive flow)
     short_text = comp.get("short_summary") or r.get("summary") or "Похоже на тебя?"
-    msg = f"{short_text}\n\nЭто похоже на тебя?"
 
-    await m.answer(msg, reply_markup=kb_analysis_confirm)
+    details = (
+        f"{short_text}\n\n"
+        f"Что происходит:\n{comp.get('what_is_happening', '—')}\n\n"
+        f"Почему так:\n{comp.get('why_it_happens', '—')}\n\n"
+        f"Почему это не про \"лень\" или \"слабость\":\n{comp.get('not_your_fault_or_control_zone', '—')}\n\n"
+        f"Почему это можно изменить:\n{comp.get('why_change_is_possible', '—')}\n\n"
+        f"На что будет упор:\n• " + "\n• ".join(comp.get("skills_focus", [])) + "\n\n"
+        f"Сроки:\n{comp.get('timeline', '—')}\n\n"
+        f"{comp.get('closing_reassurance', 'Это можно изменить.')}\n\n"
+        "Это похоже на тебя?"
+    )
+
+    await m.answer(details, reply_markup=kb_analysis_confirm)
 
 # ============================================================
 # PROGRESS & REPORTS
