@@ -16,6 +16,7 @@ import time
 import asyncio
 import logging
 import threading
+from datetime import datetime
 from typing import Dict, Any, Optional, List
 
 import aiosqlite
@@ -28,13 +29,30 @@ from openai import OpenAI
 
 # Import modules
 from texts import (
-    TRAINERS, PRAISE, DAILY_LIVE_LINES, TEST_QUESTIONS, ONBOARDING_SCREENS,
+    TRAINERS, PRAISE, DAILY_LIVE_LINES, TRAINER_REPLIES, get_trainer_reply,
+    TEST_QUESTIONS, ONBOARDING_SCREENS,
     trainer_say, trainer_confirm_text, kb_trainers, kb_input_mode, kb_yes_no,
-    kb_training_main, kb_crisis_mode, kb_analysis_confirm, kb_pay_choice,
+    kb_training_main, kb_crisis_mode, kb_analysis_confirm, kb_analysis_contract,
+    kb_analysis_map, kb_pay_choice, kb_morning_checkin,
     kb_doubt_response, kb_more_clarify, payment_inline_discount, payment_inline_full,
     CRISIS_LIMIT, resolve_bucket_from_test, create_test_question_keyboard,
-    analysis_contract_short, month_map_text, guarantee_block, offer_day_3_text,
-    gamify_status_line, skill_explain, skill_detail_text, inactivity_ping
+    analysis_contract_short, contract_full_text, month_map_text, guarantee_block, offer_day_3_text,
+    gamify_status_line, skill_explain, skill_detail_text, get_morning_checkin_ack,
+    daytime_ping, evening_close_question, evening_close_coach_reply, kb_evening_close,
+    reactivation_6h, reactivation_24h, reactivation_3d, reactivation_7d, kb_reactivation,
+    reactivation_soft_return, kb_soft_return,
+    kb_mode_choice, MODE_CHOICE_TEXT,
+)
+from dialog_engine import (
+    detect_dialog_pattern,
+    get_dialog_reply,
+    need_clarify,
+    clarify_question,
+    render_behavior_chain,
+    anti_churn_message,
+    trainer_block,
+    MISUNDERSTOOD_FALLBACK,
+    guidance_micro_phrase,
 )
 from skills import (
     SKILLS_DB,
@@ -47,7 +65,8 @@ from skills import (
 )
 from db import (
     USER_FIELDS, default_user, init_db, migrate_db, get_user, save_user, 
-    log_event, gamify_apply, is_paid, should_ping, EXTRA_USER_COLS
+    log_event, gamify_apply, is_paid, EXTRA_USER_COLS,
+    push_user_summary, compute_stuck_flag,
 )
 from flows import (
     start_day, start_day1, start_day_simple, advance_day, handle_crisis,
@@ -76,8 +95,11 @@ PAYMENT_URL_FULL = (os.getenv("PAYMENT_URL_FULL") or "").strip()
 SHEETS_WEBHOOK_URL = (os.getenv("SHEETS_WEBHOOK_URL") or "").strip()
 
 TEST_MODE = (os.getenv("TEST_MODE") or "").lower() in {"1", "true", "yes", "on", "debug"}
+ENABLE_PAYMENTS = (os.getenv("ENABLE_PAYMENTS") or "").lower() in {"1", "true", "yes", "on"}
 
 log.info(f"APP_VERSION: {APP_VERSION}")
+log.info(f"TEST_MODE: {TEST_MODE}")
+log.info(f"ENABLE_PAYMENTS: {ENABLE_PAYMENTS}")
 
 client = None
 AI_ANALYSIS_ENABLED = False
@@ -99,6 +121,10 @@ print(f"DB_PATH: {DB_PATH}")
 print(f"AI_ANALYSIS_ENABLED: {AI_ANALYSIS_ENABLED}")
 print(f"OPENAI_CHAT_MODEL: {OPENAI_CHAT_MODEL}")
 print(f"OPENAI_WHISPER_MODEL: {OPENAI_WHISPER_MODEL}")
+
+
+def payments_enabled() -> bool:
+    return ENABLE_PAYMENTS and not TEST_MODE
 
 
 async def ai_micro_reflect(user_text: str, trainer_key: str, client=None, model: str = "gpt-4o-mini") -> str:
@@ -142,6 +168,44 @@ async def ai_micro_reflect(user_text: str, trainer_key: str, client=None, model:
     except Exception as e:
         log.error(f"ai_micro_reflect failed: {e}")
     return fallback.get(trainer_key, fallback["marsha"])
+
+
+async def sync_user_summary_state(u: Dict[str, Any], last_event: Optional[str] = None):
+    if last_event:
+        u["last_event"] = last_event
+        u["last_event_at"] = time.time()
+    u["stuck_flag"] = compute_stuck_flag(u)
+    await save_user(u, DB_PATH)
+    await push_user_summary(u, SHEETS_WEBHOOK_URL)
+
+
+async def track_user_event(u: Dict[str, Any], stage: str, event: str, meta: Optional[Dict[str, Any]] = None):
+    u["last_event"] = event
+    u["last_event_at"] = time.time()
+    u["stuck_flag"] = compute_stuck_flag(u)
+    await save_user(u, DB_PATH)
+    await push_user_summary(u, SHEETS_WEBHOOK_URL)
+    await log_event(
+        u["user_id"],
+        stage,
+        event,
+        meta or {},
+        DB_PATH,
+        SHEETS_WEBHOOK_URL,
+        user_snapshot=u,
+    )
+
+
+async def ask_training_target(m: Message):
+    await m.answer(
+        "Перед стартом: что ты прокрастинируешь сегодня?\n"
+        "Одна задача/дело, на котором потренируемся.\n"
+        "Напиши коротко или нажми 'Пропустить'.",
+        reply_markup=ReplyKeyboardMarkup(
+            keyboard=[[KeyboardButton(text="Пропустить")]],
+            resize_keyboard=True,
+        ),
+    )
 
 # ============================================================
 # ROUTER & HANDLERS
@@ -194,12 +258,13 @@ async def cmd_start(m: Message):
     uid = m.from_user.id
     u = await get_user(uid, DB_PATH)
     u["chat_id"] = m.chat.id
+    u["username"] = m.from_user.username or ""
 
 
     # Новый порядок онбординга:
     # 1. Экраны онбординга
     u["stage"] = "ask_name"
-    await save_user(u, DB_PATH)
+    await track_user_event(u, "onboarding", "onboarding_started")
     for screen in ONBOARDING_SCREENS:
         await m.answer(screen)
         await asyncio.sleep(0.3)
@@ -218,15 +283,138 @@ async def main_flow(m: Message):
     text = (m.text or "").strip()
     low = text.lower()
 
+    profile_changed = False
+    username = m.from_user.username or ""
+    if u.get("chat_id") != m.chat.id:
+        u["chat_id"] = m.chat.id
+        profile_changed = True
+    if (u.get("username") or "") != username:
+        u["username"] = username
+        profile_changed = True
+    if profile_changed:
+        await sync_user_summary_state(u)
+
+    # Сбрасываем счётчик реактивации при любой активности пользователя
+    u["reactivation_level"] = 0
+
     # Глобальный хук: кризис доступен из любого состояния, но не перебиваем активный кризис-флоу
     if (text == "🆘 Кризис" or "кризис" in low) and u.get("stage") not in {"crisis_choose_mode", "crisis_voice", "crisis_text", "crisis_plan_confirm"}:
         u["stage"] = "crisis_choose_mode"
-        await save_user(u, DB_PATH)
-        await log_event(u["user_id"], u["stage"], "crisis_open", {}, DB_PATH, SHEETS_WEBHOOK_URL)
+        await track_user_event(u, u["stage"], "crisis_open")
         await m.answer("🆘 Ок. Как удобнее?", reply_markup=kb_crisis_mode)
         return
 
+    if u.get("stage") == "evening_close_wait":
+        trainer_key = u.get("trainer_key") or "marsha"
+        if not text:
+            await m.answer("Можно выбрать вариант кнопкой или написать одной фразой.", reply_markup=kb_evening_close)
+            return
+
+        if text == "✍️ Напишу сам":
+            await m.answer("Ок, напиши одной фразой.", reply_markup=kb_evening_close)
+            return
+
+        mapped = text
+        if text == "✅ Что-то получилось":
+            mapped = "Что-то получилось хотя бы частично."
+        elif text == "🧱 Было тяжело":
+            mapped = "Сегодня было труднее всего удержаться и продолжать."
+        elif text == "↩️ Срывался(ась), но возвращался(ась)":
+            mapped = "Были срывы, но я возвращался(ась)."
+
+        await log_event(
+            u["user_id"],
+            "evening_close",
+            "evening_close_answered",
+            {
+                "raw": text,
+                "mapped": mapped,
+                "restore_stage": u.get("evening_return_stage") or "training",
+            },
+            DB_PATH,
+            SHEETS_WEBHOOK_URL,
+        )
+
+        reply = evening_close_coach_reply(trainer_key, mapped)
+        restore_stage = u.get("evening_return_stage") or "training"
+        u["stage"] = restore_stage
+        u["evening_return_stage"] = None
+        u["last_active"] = time.time()
+        await save_user(u, DB_PATH)
+        await m.answer(trainer_say(trainer_key, reply), reply_markup=kb_training_main)
+        return
+
     # Пост-рефлексия после выполнения
+        if u.get("stage") == "reactivation_wait":
+            trainer_key = u.get("trainer_key") or "marsha"
+            restore = u.get("evening_return_stage") or "training"
+
+            if text == "↩️ Вернуться с сегодняшнего дня":
+                u["stage"] = restore
+                u["evening_return_stage"] = None
+                u["last_active"] = time.time()
+                u["day_started_at"] = time.time()
+                await save_user(u, DB_PATH)
+                await log_event(u["user_id"], "reactivation", "reactivation_returned", {"via": "start_day"}, DB_PATH, SHEETS_WEBHOOK_URL)
+                day = int(u.get("day") or 1)
+                await start_day(m, u, day, DB_PATH, SHEETS_WEBHOOK_URL)
+                return
+
+            if text == "🎯 Взять самый простой навык":
+                plan = get_current_plan(u)
+                sid = plan[0] if plan else None
+                skill = SKILLS_DB.get(sid, {}) if sid else {}
+                msg = skill_explain(trainer_key, skill) if skill else "Начни с 1–2 минут: просто сядь и сделай один маленький шаг."
+                u["stage"] = "training"
+                u["evening_return_stage"] = None
+                u["day_started_at"] = time.time()
+                u["last_active"] = time.time()
+                await save_user(u, DB_PATH)
+                await log_event(u["user_id"], "reactivation", "reactivation_returned", {"via": "simplest_skill", "sid": sid or ""}, DB_PATH, SHEETS_WEBHOOK_URL)
+                await m.answer(trainer_say(trainer_key, msg), reply_markup=kb_training_main)
+                return
+
+            if text == "🌱 Нужен мягкий вход":
+                u["stage"] = "morning_checkin"
+                u["evening_return_stage"] = None
+                u["day_started_at"] = time.time()
+                u["last_active"] = time.time()
+                await save_user(u, DB_PATH)
+                await log_event(u["user_id"], "reactivation", "reactivation_returned", {"via": "gentle_entry"}, DB_PATH, SHEETS_WEBHOOK_URL)
+                from texts import get_morning_checkin_opener
+                await m.answer(trainer_say(trainer_key, get_morning_checkin_opener(trainer_key)), reply_markup=kb_morning_checkin)
+                return
+
+            if text == "🌱 Вернуться без давления":
+                plan = get_current_plan(u)
+                sid = plan[0] if plan else None
+                skill = SKILLS_DB.get(sid, {}) if sid else {}
+                step = skill.get("micro") or skill.get("minimum") or "открыть задачу на 2 минуты"
+                msg = reactivation_soft_return(trainer_key, u.get("name") or "", step)
+                u["stage"] = "training"
+                u["evening_return_stage"] = None
+                u["day_started_at"] = time.time()
+                u["last_active"] = time.time()
+                await save_user(u, DB_PATH)
+                await log_event(u["user_id"], "reactivation", "reactivation_returned", {"via": "soft_return"}, DB_PATH, SHEETS_WEBHOOK_URL)
+                await m.answer(trainer_say(trainer_key, msg), reply_markup=kb_training_main)
+                return
+
+            # Пользователь написал что-то своё — показываем soft return экран
+            plan = get_current_plan(u)
+            sid = plan[0] if plan else None
+            skill = SKILLS_DB.get(sid, {}) if sid else {}
+            step = skill.get("micro") or skill.get("minimum") or "открыть задачу на 2 минуты"
+            msg = reactivation_soft_return(trainer_key, u.get("name") or "", step)
+            u["stage"] = restore
+            u["evening_return_stage"] = None
+            u["last_active"] = time.time()
+            await save_user(u, DB_PATH)
+            await log_event(u["user_id"], "reactivation", "reactivation_returned", {"via": "free_text"}, DB_PATH, SHEETS_WEBHOOK_URL)
+            await m.answer(trainer_say(trainer_key, msg), reply_markup=kb_soft_return)
+            return
+
+        # Пост-рефлексия после выполнения
     if u.get("stage") == "waiting_next_day":
         trainer_key = u.get("trainer_key") or "marsha"
         reply = await ai_micro_reflect(text or "", trainer_key, client, OPENAI_CHAT_MODEL)
@@ -247,6 +435,37 @@ async def main_flow(m: Message):
         await m.answer(f"✅ Whisper:\n\n{t}")
         return
 
+
+    # ============================================================
+    # LIVE DIALOG PATTERN HOOK
+    # ============================================================
+    dialog_stages = {
+        "await_problem_text",
+        "analysis_refine",
+        "training",
+        "morning_checkin_custom",
+        "await_training_target",
+    }
+
+    if u.get("stage") in dialog_stages and text:
+        pattern = detect_dialog_pattern(text)
+
+        if u.get("stage") in {"await_problem_text", "analysis_refine"} and need_clarify(text):
+            await m.answer(clarify_question(u.get("mode") or "normal"))
+            return
+
+        if pattern and u.get("stage") in {"training", "await_problem_text", "analysis_refine"}:
+            reply = get_dialog_reply(
+                u.get("trainer_key") or "marsha",
+                u.get("mode") or "normal",
+                pattern,
+            )
+            if reply:
+                await m.answer(trainer_say(u.get("trainer_key") or "marsha", reply))
+
+                if pattern == "misunderstood":
+                    await m.answer(MISUNDERSTOOD_FALLBACK)
+                    return
 
     # ask_name
     if u["stage"] == "ask_name":
@@ -284,11 +503,16 @@ async def main_flow(m: Message):
             return
         u["trainer_key"] = chosen
         u["stage"] = "trainer_intro"
-        await save_user(u, DB_PATH)
+        await track_user_event(u, "onboarding", "trainer_selected", {"trainer_key": chosen})
         # Описание и фото тренера
         await send_trainer_photo_if_any(m.chat.id, chosen, BOT_TOKEN)
         from texts import send_trainer_introduction
         await send_trainer_introduction(m, u)
+        # Личный онбординг тренера — показывать после выбора тренера
+        screens = trainer_block(u.get("trainer_key") or "marsha", "onboarding")
+        if screens:
+            for screen in screens:
+                await m.answer(screen)
         await m.answer("Готов начать разбор и перейти к первому дню?", reply_markup=kb_yes_no)
         return
 
@@ -298,13 +522,9 @@ async def main_flow(m: Message):
     if u["stage"] == "trainer_intro":
         low = (text or "").lower()
         if "да" in low:
-            # Диагностика: выбор способа
-            u["stage"] = "await_input_mode"
+            u["stage"] = "await_mode"
             await save_user(u, DB_PATH)
-            await m.answer(
-                f"{u['name']}, как удобнее пройти диагностику?",
-                reply_markup=kb_input_mode
-            )
+            await m.answer(MODE_CHOICE_TEXT, reply_markup=kb_mode_choice)
             return
         if "нет" in low:
             u["stage"] = "await_trainer"
@@ -315,6 +535,30 @@ async def main_flow(m: Message):
         return
 
     # ============================================================
+    # MODE SELECTION
+    # ============================================================
+    if u.get("stage") == "await_mode":
+        low = (text or "").lower().strip()
+
+        if text == "🌱 Бережно" or "береж" in low:
+            u["mode"] = "easy"
+        elif text == "⚙️ Стандартно" or "стандарт" in low:
+            u["mode"] = "normal"
+        elif text == "🔥 Собранно" or "собран" in low or "жест" in low:
+            u["mode"] = "hard"
+        else:
+            await m.answer("Выбери режим кнопкой 👇", reply_markup=kb_mode_choice)
+            return
+
+        u["stage"] = "await_input_mode"
+        await track_user_event(u, "onboarding", "mode_selected", {"mode": u["mode"]})
+        await m.answer(
+            f"{u.get('name') or 'Ок'}, как удобнее пройти диагностику?",
+            reply_markup=kb_input_mode
+        )
+        return
+
+    # ============================================================
     # INPUT MODE SELECTION
     # ============================================================
     if u["stage"] == "await_input_mode":
@@ -322,20 +566,23 @@ async def main_flow(m: Message):
         if text == "🧠 Диагностика текстом" or "текст" in low:
             u["input_mode"] = "text"
             u["stage"] = "await_problem_text"
-            await save_user(u, DB_PATH)
+            await track_user_event(u, "onboarding", "input_mode_selected", {"input_mode": "text"})
+            await track_user_event(u, "analysis", "diagnosis_started", {"input_mode": "text"})
             await m.answer("Ок. Напиши 2–5 предложений: что сейчас мешает делать важное?", reply_markup=ReplyKeyboardMarkup(keyboard=[[KeyboardButton(text="Пропустить")]], resize_keyboard=True))
             return
         if text == "🎙 Диагностика голосом" or "голос" in low:
             u["input_mode"] = "voice"
             u["stage"] = "await_problem_voice"
-            await save_user(u, DB_PATH)
+            await track_user_event(u, "onboarding", "input_mode_selected", {"input_mode": "voice"})
+            await track_user_event(u, "analysis", "diagnosis_started", {"input_mode": "voice"})
             await m.answer("Ок. Пришли голосовое (10–30 сек): что сейчас мешает делать важное?", reply_markup=ReplyKeyboardMarkup(keyboard=[[KeyboardButton(text="Назад")]], resize_keyboard=True))
             return
         if text == "❓ Быстрый тест (5 вопросов)" or "тест" in low:
             u["input_mode"] = "test"
             u["stage"] = "taking_test"
             u["test_answers"] = []
-            await save_user(u, DB_PATH)
+            await track_user_event(u, "onboarding", "input_mode_selected", {"input_mode": "test"})
+            await track_user_event(u, "analysis", "diagnosis_started", {"input_mode": "test"})
             first_q = TEST_QUESTIONS[0]
             msg = f"❓ Вопрос 1/5:\n\n{first_q['text']}"
             await m.answer(msg, reply_markup=create_test_question_keyboard(1))
@@ -399,7 +646,7 @@ async def main_flow(m: Message):
         if not t:
             u["stage"] = "await_problem_text"
             await save_user(u, DB_PATH)
-            await m.answer("Не смог разобрать. Напиши текстом 1–3 предложения.")
+            await m.answer("Не смог разобрать голосовое. Это бывает. Можешь отправить ещё раз или написать текстом 1–3 предложения")
             return
         u["analysis_json"] = json.dumps({"user_text": clamp_str(t, 1000)}, ensure_ascii=False)
         u["stage"] = "run_analysis"
@@ -408,101 +655,119 @@ async def main_flow(m: Message):
         await run_analysis(m, u, t, DB_PATH, SHEETS_WEBHOOK_URL, client, OPENAI_CHAT_MODEL)
         return
 
-    # analysis_contract
-    if u.get("stage") == "analysis_contract":
-        low = (text or "").lower()
-
-        # Обработка кнопки "Принимаю контракт" и ответов "Да" после подробного текста
-        if (
-            text == "📜 Принимаю контракт на 4 недели"
-            or "принимаю" in low
-            or "принимают" in low
-            or text == "✅ Да"
-            or low.strip() == "да"
-        ):
-            u["stage"] = "training"
-            u["day"] = 1
-            await save_user(u, DB_PATH)
-            await log_event(u["user_id"], "analysis", "day1_started", {}, DB_PATH, SHEETS_WEBHOOK_URL)
-            await m.answer(month_map_text(u.get("bucket")))
-            await m.answer(guarantee_block(u.get("trainer_key")), reply_markup=kb_yes_no)
-            # Запуск первого дня сразу
-            await start_day(m, u, 1, DB_PATH, SHEETS_WEBHOOK_URL)
-            return
-
-        if text == "❌ Нет" or "нет" in low:
-            await m.answer("Ок. Вернёмся позже.")
-            return
-
-    # analysis_map
-    if u.get("stage") == "analysis_map":
+    # confirm_analysis
+    if u.get("stage") == "confirm_analysis":
         low = (text or "").lower().strip()
-
-        if text == "📜 Принимаю план" or "принимаю" in low:
-            u["stage"] = "training"
-            u["day"] = 1
-            await save_user(u, DB_PATH)
-            await log_event(u["user_id"], "analysis", "day1_started", {}, DB_PATH, SHEETS_WEBHOOK_URL)
-            await start_day(m, u, 1, DB_PATH, SHEETS_WEBHOOK_URL)
+        if text == "✅ Да, в точку" or "в точку" in low:
+            u["stage"] = "analysis_contract"
+            await track_user_event(u, "analysis", "analysis_accepted")
+            await m.answer(
+                analysis_contract_short(u.get("name") or "друг", u.get("trainer_key"), u.get("bucket")),
+                reply_markup=kb_analysis_contract,
+            )
+            await m.answer(trainer_say(u.get("trainer_key") or "marsha", guidance_micro_phrase("point")))
             return
-
         if text == "🤔 Немного не так" or "не так" in low:
             u["stage"] = "analysis_refine"
-            await save_user(u, DB_PATH)
-            await m.answer(
-                "Ок, уточни коротко, что не так в разборе.\n"
-                "Например: «это не тревога, а перегруз», «главная проблема — вход в задачу», "
-                "«я отвлекаюсь только перед сложной работой»."
-            )
-            return
-
-        if text == "❌ Нет" or low == "нет":
-            u["stage"] = "analysis_refine"
-            await save_user(u, DB_PATH)
-            await m.answer("Ок. Напиши коротко, что не совпало в плане.")
-            return
-
-        await m.answer(
-            "Выбери кнопку 👇",
-            reply_markup=ReplyKeyboardMarkup(
-                keyboard=[
-                    [KeyboardButton(text="📜 Принимаю план")],
-                    [KeyboardButton(text="🤔 Немного не так")],
-                    [KeyboardButton(text="❌ Нет")],
-                ],
-                resize_keyboard=True,
-            ),
-        )
-        return
-
-    # confirm_analysis
-    if u["stage"] == "confirm_analysis":
-        low = text.lower()
-        if "в точку" in low or (text == "✅ Да, в точку"):
-            await log_event(u["user_id"], "analysis", "analysis_accepted", {}, DB_PATH, SHEETS_WEBHOOK_URL)
-            u["stage"] = "analysis_contract"
-            await save_user(u, DB_PATH)
-            await m.answer(analysis_contract_short(u.get("name") or "друг", u.get("trainer_key"), u.get("bucket")),
-                            reply_markup=ReplyKeyboardMarkup(keyboard=[[KeyboardButton(text="Подробнее о контракте")], [KeyboardButton(text="📜 Принимаю контракт на 4 недели")]], resize_keyboard=True))
-            return
-        if "немного" in low or "не так" in low or (text == "🤔 Немного не так"):
-            u["stage"] = "analysis_refine"
-            await save_user(u, DB_PATH)
+            await track_user_event(u, "analysis", "analysis_refined", {"source": "confirm_analysis"})
             await m.answer(
                 "Ок, уточним и пересоберём вывод.\n\n"
                 "Ответь коротко (1–2 предложения):\n"
-                "1️⃣ Сложнее НАЧАТЬ или УДЕРЖАТЬ?\n"
-                "2️⃣ Больше тревоги или больше пустоты/энергии нет?\n"
-                "3️⃣ Отвлечения — главная проблема или вторично?"
+                "1) Сложнее начать или удержать?\n"
+                "2) Больше тревоги или пустоты/усталости?\n"
+                "3) Отвлечения — главная причина или вторично?"
+            )
+            return
+        if text == "📚 Подробнее" or text == "ℹ️ Подробнее" or "подробнее" in low:
+            comp = {}
+            try:
+                comp = json.loads(u.get("analysis_json") or "{}") if u.get("analysis_json") else {}
+            except Exception:
+                comp = {}
+            u["stage"] = "analysis_more"
+            await save_user(u, DB_PATH)
+
+            trigger = (
+                comp.get("why_it_happens")
+                or comp.get("short_summary")
+                or "напряжение перед стартом"
+            )
+            chain_text = render_behavior_chain([
+                trigger,
+                comp.get("what_is_happening", "Сейчас сложно устойчиво входить в задачу."),
+                comp.get("not_your_fault_or_control_zone", "Это не про характер. Это рабочий паттерн, который можно менять шаг за шагом."),
+                comp.get("training_path", "Короткий запуск, удержание фокуса и спокойный возврат."),
+            ])
+            timeline = comp.get("timeline", "Обычно первые изменения заметны в течение 2–3 недель регулярной практики.")
+
+            await m.answer(
+                f"{chain_text}\n\nКогда ждать первые сдвиги:\n{timeline}\n\nЭто ближе к твоей ситуации?",
+                reply_markup=kb_analysis_confirm,
             )
             return
         await m.answer("Выбери кнопку 👇", reply_markup=kb_analysis_confirm)
         return
 
-    # Подробнее о контракте
-    if u.get("stage") == "analysis_contract" and (text == "Подробнее о контракте" or "подробнее о контракте" in text.lower()):
-        from texts import contract_full_text
-        await m.answer(contract_full_text(u.get("name") or "друг", u.get("trainer_key"), u.get("bucket")), reply_markup=kb_yes_no)
+    # analysis_more
+    if u.get("stage") == "analysis_more":
+        low = (text or "").lower().strip()
+        if text == "✅ Да, в точку" or "в точку" in low:
+            u["stage"] = "analysis_contract"
+            await sync_user_summary_state(u)
+            await m.answer(
+                analysis_contract_short(u.get("name") or "друг", u.get("trainer_key"), u.get("bucket")),
+                reply_markup=kb_analysis_contract,
+            )
+            await m.answer(trainer_say(u.get("trainer_key") or "marsha", guidance_micro_phrase("reason")))
+            return
+        if text == "🤔 Немного не так" or "не так" in low:
+            u["stage"] = "analysis_refine"
+            await track_user_event(u, "analysis", "analysis_refined", {"source": "analysis_more"})
+            await m.answer("Ок. Напиши 1–2 предложения, что именно не совпало.")
+            return
+        await m.answer("Посмотри, насколько это откликается, и выбери кнопку 👇", reply_markup=kb_analysis_confirm)
+        return
+
+    # analysis_contract
+    if u.get("stage") == "analysis_contract":
+        low = (text or "").lower().strip()
+        if text == "📜 Принимаю контракт" or "принимаю" in low:
+            u["stage"] = "analysis_map"
+            await save_user(u, DB_PATH)
+            await m.answer(month_map_text(u.get("bucket")))
+            await m.answer(
+                f"{guarantee_block(u.get('trainer_key'))}\n\nГотов(а) идти по этому плану?",
+                reply_markup=kb_analysis_map,
+            )
+            return
+        if text == "🤔 Немного не так" or "не так" in low:
+            u["stage"] = "analysis_refine"
+            await save_user(u, DB_PATH)
+            await m.answer("Ок. Напиши коротко, что в контракте не подходит.")
+            return
+        if text == "ℹ️ Подробнее" or "подробнее" in low:
+            await m.answer(
+                contract_full_text(u.get("name") or "друг", u.get("trainer_key"), u.get("bucket")),
+                reply_markup=kb_analysis_contract,
+            )
+            return
+        await m.answer("Давай спокойно выберем следующий шаг 👇", reply_markup=kb_analysis_contract)
+        return
+
+    # analysis_map
+    if u.get("stage") == "analysis_map":
+        low = (text or "").lower().strip()
+        if text == "📜 Принимаю план" or "принимаю" in low:
+            u["day"] = 1
+            await track_user_event(u, "analysis", "day1_started")
+            await start_day(m, u, 1, DB_PATH, SHEETS_WEBHOOK_URL)
+            return
+        if text == "🤔 Немного не так" or "не так" in low or low == "нет":
+            u["stage"] = "analysis_refine"
+            await save_user(u, DB_PATH)
+            await m.answer("Ок. Напиши коротко, что не совпало в плане.")
+            return
+        await m.answer("Можно выбрать один из вариантов ниже 👇", reply_markup=kb_analysis_map)
         return
 
     # analysis_retry_await_clarification
@@ -544,6 +809,59 @@ async def main_flow(m: Message):
         await run_analysis(m, u, combined_text, DB_PATH, SHEETS_WEBHOOK_URL, client, OPENAI_CHAT_MODEL)
         return
 
+    # morning_checkin
+    if u.get("stage") == "morning_checkin":
+        trainer_key = u.get("trainer_key") or "marsha"
+        low = (text or "").lower().strip()
+
+        mood_key = None
+        if text == "тревожно" or "трев" in low:
+            mood_key = "anxious"
+        elif text == "не хочу начинать" or ("не хочу" in low and "нач" in low):
+            mood_key = "resistant"
+        elif text == "пусто / нет сил" or "нет сил" in low or "пусто" in low:
+            mood_key = "empty"
+        elif text == "отвлекаюсь" or "отвлек" in low:
+            mood_key = "distracted"
+        elif text == "нормально, идём" or "нормально" in low:
+            mood_key = "ok"
+        elif text == "напишу сам":
+            u["stage"] = "morning_checkin_custom"
+            await save_user(u, DB_PATH)
+            await m.answer(
+                trainer_say(trainer_key, "Ок. Напиши коротко, что сейчас больше всего мешает войти в день."),
+                reply_markup=ReplyKeyboardMarkup(
+                    keyboard=[[KeyboardButton(text="тревожно"), KeyboardButton(text="не хочу начинать")],
+                              [KeyboardButton(text="пусто / нет сил"), KeyboardButton(text="отвлекаюсь")],
+                              [KeyboardButton(text="нормально, идём")]],
+                    resize_keyboard=True,
+                ),
+            )
+            return
+
+        if not mood_key:
+            await m.answer("Выбери вариант ниже или нажми 'напишу сам'.", reply_markup=kb_morning_checkin)
+            return
+
+        u["stage"] = "await_training_target"
+        await save_user(u, DB_PATH)
+        await m.answer(trainer_say(trainer_key, get_morning_checkin_ack(trainer_key, mood_key)))
+        await ask_training_target(m)
+        return
+
+    # morning_checkin_custom
+    if u.get("stage") == "morning_checkin_custom":
+        trainer_key = u.get("trainer_key") or "marsha"
+        if not text:
+            await m.answer("Напиши коротко: одной фразой.")
+            return
+
+        u["stage"] = "await_training_target"
+        await save_user(u, DB_PATH)
+        await m.answer(trainer_say(trainer_key, get_morning_checkin_ack(trainer_key, "custom")))
+        await ask_training_target(m)
+        return
+
     # Вопрос перед выдачей навыка
     if u.get("stage") == "await_training_target":
         target = clamp_str(text or "", 200)
@@ -577,8 +895,7 @@ async def main_flow(m: Message):
         u["pending_skill_id"] = None
         u["pending_skill_day"] = None
         u["stage"] = "training"
-        await save_user(u, DB_PATH)
-        await log_event(u["user_id"], "training", "target_set", {"day": day, "text": target}, DB_PATH, SHEETS_WEBHOOK_URL)
+        await track_user_event(u, "training", "target_set", {"day": day, "text": target})
 
         await m.answer(trainer_say(trainer_key, msg), reply_markup=kb_training_main)
         await m.answer(gamify_status_line(u))
@@ -602,7 +919,7 @@ async def main_flow(m: Message):
                 "и после попытки отмечай результат кнопкой "
                 "'✅ Сделал(а)' или '↩️ Вернулся(лась)'."
             )
-            await log_event(u["user_id"], "training", "repeat_practice", {"day": day, "sid": sid}, DB_PATH, SHEETS_WEBHOOK_URL)
+            await track_user_event(u, "training", "repeat_practice", {"day": day, "sid": sid})
             await m.answer(trainer_say(trainer_key, f"{detail}\n\n{prompt}"), reply_markup=kb_training_main)
             return
 
@@ -650,8 +967,7 @@ async def main_flow(m: Message):
 
         if text == "🆘 Кризис" or "кризис" in low:
             u["stage"] = "crisis_choose_mode"
-            await save_user(u, DB_PATH)
-            await log_event(u["user_id"], u["stage"], "crisis_open", {}, DB_PATH, SHEETS_WEBHOOK_URL)
+            await track_user_event(u, u["stage"], "crisis_open")
             await m.answer("🆘 Ок. Как удобнее?", reply_markup=kb_crisis_mode)
             return
 
@@ -660,7 +976,7 @@ async def main_flow(m: Message):
             return
 
         if text == "✅ Сделал(а)" or "сделал" in low:
-            await log_event(u["user_id"], "training_done", "done", {"day": day})
+            u["done_count"] = int(u.get("done_count") or 0) + 1
             gamify_apply(u, 2, "done")
             trainer = u.get("trainer_key")
             # 1️⃣ Базовая реакция
@@ -675,31 +991,32 @@ async def main_flow(m: Message):
                 await m.answer("Что ты заметил во время выполнения?")
             # post_done_reflection этап убран, сразу переходим к следующему этапу
             u["stage"] = "waiting_next_day"
-            await save_user(u, DB_PATH)
+            await track_user_event(u, "training", "done", {"day": day})
+            await m.answer(trainer_say(u.get("trainer_key") or "marsha", guidance_micro_phrase("progress")))
             await m.answer("Завтра будет чуть легче, чем сегодня.")
             return
 
         if text == "↩️ Вернулся(лась)" or "вернулся" in low:
-            await log_event(u["user_id"], "training", "return", {"day": day}, DB_PATH, SHEETS_WEBHOOK_URL)
             u["return_count"] += 1
             gamify_apply(u, 1, "return")
-            await save_user(u, DB_PATH)
+            await track_user_event(u, "training", "return", {"day": day})
             await m.answer(trainer_say(u.get("trainer_key") or "marsha", "Возврат засчитан. Это ключевой навык."))
+            await m.answer(trainer_say(u.get("trainer_key") or "marsha", guidance_micro_phrase("reason")))
             try:
                 await m.answer(trainer_say(u.get("trainer_key") or "marsha", PRAISE.get(u.get("trainer_key") or "marsha", "")))
             except Exception:
                 pass
             if day == 7:
                 await send_weekly_summary(m, u, DB_PATH)
-            if not TEST_MODE and day == 3 and u.get("trial_phase") == "trial3":
+            if payments_enabled() and day == 3 and u.get("trial_phase") == "trial3":
                 await m.answer("Ты уже видел(а):\nэто не мотивация.\nЭто тренировка.\n\n💳 Сейчас — цена со скидкой.", reply_markup=kb_pay_choice)
                 u["stage"] = "offer"
-                await save_user(u, DB_PATH)
+                await track_user_event(u, "offer", "offer_shown", {"variant": "discount_day3"})
                 return
-            if not TEST_MODE and day >= 7 and u.get("trial_phase") in ("trial3", "trial7", None):
+            if payments_enabled() and day >= 7 and u.get("trial_phase") in ("trial3", "trial7", None):
                 await m.answer("Выбирай вариант оплаты:", reply_markup=kb_pay_choice)
                 u["stage"] = "offer"
-                await save_user(u, DB_PATH)
+                await track_user_event(u, "offer", "offer_shown", {"variant": "full_day7"})
                 return
             await start_day(m, u, day + 1, DB_PATH, SHEETS_WEBHOOK_URL)
             return
@@ -807,7 +1124,7 @@ async def main_flow(m: Message):
             return
         t = await whisper_transcribe(m)
         if not t:
-            await m.answer("Не смог разобрать. Напиши текстом 1–3 предложения.")
+            await m.answer("Не смог разобрать голосовое. Это бывает. Можешь отправить ещё раз или написать текстом 1–3 предложения")
             u["stage"] = "crisis_text"
             await save_user(u, DB_PATH)
             return
@@ -842,40 +1159,40 @@ async def main_flow(m: Message):
 
     # OFFER stage
     if u.get("stage") == "offer":
-        if TEST_MODE:
+        if not payments_enabled():
             u["stage"] = "training"
-            u["trial_phase"] = "paid"
-            await save_user(u, DB_PATH)
-            await m.answer("Тестовый режим: продолжаем без оплаты.", reply_markup=kb_training_main)
+            await track_user_event(u, "payment", "payment_bypassed", {"reason": "payments_disabled"})
+            await m.answer("Сейчас идёт тестовый запуск. Продолжаем без оплаты.", reply_markup=kb_training_main)
             return
+
         low = text.lower().strip()
+
         if text == "💳 Оплатить со скидкой" or "со скидкой" in low:
+            await track_user_event(u, "payment", "payment_clicked", {"variant": "discount"})
             await m.answer("Ок. Скидка по ссылке 👇")
             await m.answer(" ", reply_markup=payment_inline_discount(PAYMENT_URL_DISCOUNT))
             return
+
         if text == "💳 Оплатить без скидки" or "без скидки" in low:
+            await track_user_event(u, "payment", "payment_clicked", {"variant": "full"})
             await m.answer("Ок. Полная цена по ссылке 👇")
             await m.answer(" ", reply_markup=payment_inline_full(PAYMENT_URL_FULL))
             return
+
         if text == "➕ Ещё 4 дня без оплаты" or "ещё" in low or "дня" in low:
-            await m.answer("Ок. Продолжаем тренировку! 💪")
-            u["stage"] = "training"
-            await save_user(u, DB_PATH)
-            await m.answer("Выбери действие:", reply_markup=kb_training_main)
-            return
-        if text == "❌ Не готов(а)" or "не готов" in low:
-            await m.answer("Ок. Если захочешь продолжить — просто напиши /start")
-            u["stage"] = "idle"
-            await save_user(u, DB_PATH)
-            return
-        if "ещ" in low:
             u["trial_days"] = 7
             u["trial_phase"] = "trial7"
-            await save_user(u, DB_PATH)
-            await m.answer("Ок. Ещё 4 дня в пробе. Продолжаем.", reply_markup=kb_training_main)
             u["stage"] = "training"
-            await save_user(u, DB_PATH)
+            await track_user_event(u, "payment", "trial_extended", {"days": 4})
+            await m.answer("Ок. Добавил ещё 4 дня. Продолжаем.", reply_markup=kb_training_main)
             return
+
+        if text == "❌ Не готов(а)" or "не готов" in low:
+            u["stage"] = "training"
+            await track_user_event(u, "payment", "offer_declined", {})
+            await m.answer("Ок. Тогда пока просто продолжаем тренировку без оплаты.", reply_markup=kb_training_main)
+            return
+
         await m.answer("Выбирай кнопкой 👇", reply_markup=kb_pay_choice)
         return
 
@@ -897,14 +1214,16 @@ async def on_callbacks(c: CallbackQuery):
         return
     if u.get("stage") == "confirm_analysis":
         if c.data == "yes":
-            u["stage"] = "training"
+            u["stage"] = "analysis_contract"
             await save_user(u, DB_PATH)
-            # Показываем первый навык сразу после онбординга (через callback)
-            await start_day(m=c.message, u=u, day=1, db_path=DB_PATH, sheets_webhook=SHEETS_WEBHOOK_URL)
+            await c.message.answer(
+                analysis_contract_short(u.get("name") or "друг", u.get("trainer_key"), u.get("bucket")),
+                reply_markup=kb_analysis_contract,
+            )
         else:
-            u["stage"] = "await_problem_text"
+            u["stage"] = "analysis_refine"
             await save_user(u, DB_PATH)
-            await c.message.answer("Ок. Тогда уточни: что больше всего мешает? (2–3 предложения)")
+            await c.message.answer("Ок. Напиши 1–2 предложения, что не совпало в разборе.")
         await c.answer()
         return
     await c.answer()
@@ -970,35 +1289,49 @@ async def show_comprehensive_analysis(m: Message, u: Dict[str, Any]):
 # ============================================================
 
 async def whisper_transcribe(m: Message) -> Optional[str]:
+    from_user = getattr(m, "from_user", None)
+    uid = from_user.id if from_user else "unknown"
+    log.info("[WHISPER] start uid=%s", uid)
+
     if not (AI_ANALYSIS_ENABLED and client):
-        log.warning("Whisper skipped: AI disabled or client is None")
+        log.warning("[WHISPER] skipped: AI disabled or client is None")
         return None
 
     if not m.voice:
-        log.warning("Whisper skipped: no voice in message")
+        log.warning("[WHISPER] skipped: no voice in message")
         return None
 
-    try:
-        file = await m.bot.get_file(m.voice.file_id)
-        log.info(f"Whisper file_path: {file.file_path}")
+    file_id = m.voice.file_id
+    duration = getattr(m.voice, "duration", None)
+    log.info("[WHISPER] voice received file_id=%s duration=%s", file_id, duration)
 
+    try:
+        log.info("[WHISPER] step=telegram.get_file")
+        file = await m.bot.get_file(file_id)
+        if not file or not file.file_path:
+            log.warning("[WHISPER] step=telegram.get_file result=empty_path")
+            return None
+
+        log.info("[WHISPER] step=telegram.download_file path=%s", file.file_path)
         fp = await m.bot.download_file(file.file_path)
-        data = fp.read()
+        data = fp.read() if fp else b""
+        size = len(data) if data else 0
+        log.info("[WHISPER] step=telegram.download_file done bytes=%s", size)
 
         if not data:
-            log.warning("Whisper downloaded empty file")
+            log.warning("[WHISPER] downloaded empty file")
             return None
 
         import io
         bio = io.BytesIO(data)
         bio.name = "voice.ogg"
 
-        log.info("Whisper request started")
+        log.info("[WHISPER] step=openai.transcribe model=%s", OPENAI_WHISPER_MODEL)
         tr = client.audio.transcriptions.create(
             model=OPENAI_WHISPER_MODEL,
             file=bio
         )
-        log.info("Whisper response received")
+        log.info("[WHISPER] step=openai.transcribe done")
 
         text = getattr(tr, "text", None)
         if not text:
@@ -1008,12 +1341,14 @@ async def whisper_transcribe(m: Message) -> Optional[str]:
                 text = None
 
         text = (text or "").strip()
-        log.info(f"Whisper text: {text[:200]!r}")
+        if not text:
+            log.warning("[WHISPER] finish: empty transcription")
+            return None
 
-        return text or None
-
-    except Exception as e:
-        log.exception("whisper error: %s", e)
+        log.info("[WHISPER] finish: ok chars=%s preview=%r", len(text), text[:120])
+        return text
+    except Exception:
+        log.exception("[WHISPER] fail uid=%s", uid)
         return None
 
 # ============================================================
@@ -1022,16 +1357,248 @@ async def whisper_transcribe(m: Message) -> Optional[str]:
 
 async def background_ping(bot):
     while True:
+        now_ts = time.time()
+        now_local = datetime.now()
+
+        def _is_same_day(ts: float) -> bool:
+            if not ts:
+                return False
+            try:
+                return datetime.fromtimestamp(float(ts)).date() == now_local.date()
+            except Exception:
+                return False
+
         async with aiosqlite.connect(DB_PATH) as db:
+            db.row_factory = aiosqlite.Row
             cur = await db.execute("SELECT * FROM users")
             rows = await cur.fetchall()
+
         for row in rows:
-            u = dict(zip(USER_FIELDS, row))
-            if should_ping(u, 24) and u.get("stage") in {"training", "await_training_target"}:
-                try:
-                    await bot.send_message(u["chat_id"], inactivity_ping(u.get("trainer_key")))
-                except Exception as e:
-                    log.warning(f"Не удалось отправить сообщение {u['chat_id']}: {e}")
+            u = dict(row)
+            stage = u.get("stage")
+            if stage not in {"training", "waiting_next_day"}:
+                continue
+
+            day_started_at = float(u.get("day_started_at") or 0)
+            if not _is_same_day(day_started_at):
+                continue
+
+            trainer_key = u.get("trainer_key") or "marsha"
+            name = (u.get("name") or "").strip()
+            chat_id = u.get("chat_id")
+            if not chat_id:
+                continue
+
+            last_active = float(u.get("last_active") or 0)
+            inactive_seconds = now_ts - last_active if last_active else 10**9
+
+            # Дневной пинг: пользователь начал день, но долго не пишет.
+            if 11 <= now_local.hour < 19 and inactive_seconds >= 3 * 3600:
+                if not _is_same_day(float(u.get("last_day_ping_at") or 0)):
+                    try:
+                        u["last_day_ping_at"] = now_ts
+                        await bot.send_message(chat_id, trainer_say(trainer_key, daytime_ping(trainer_key, name)))
+                        await track_user_event(
+                            u,
+                            "training",
+                            "day_ping_sent",
+                            {
+                                "inactive_hours": round(inactive_seconds / 3600, 2),
+                                "hour": now_local.hour,
+                            },
+                        )
+                        await save_user(u, DB_PATH)
+                    except Exception as e:
+                        log.warning(f"Не удалось отправить дневной пинг {chat_id}: {e}")
+
+            # Вечернее закрытие: один из двух вопросов + варианты ответа.
+            if 20 <= now_local.hour < 23:
+                if not _is_same_day(float(u.get("last_evening_prompt_at") or 0)):
+                    try:
+                        await bot.send_message(
+                            chat_id,
+                            trainer_say(trainer_key, evening_close_question(trainer_key)),
+                            reply_markup=kb_evening_close,
+                        )
+                        u["last_evening_prompt_at"] = now_ts
+                        u["evening_return_stage"] = stage
+                        u["stage"] = "evening_close_wait"
+                        await save_user(u, DB_PATH)
+                    except Exception as e:
+                        log.warning(f"Не удалось отправить вечернее закрытие {chat_id}: {e}")
+        for row in rows:
+            u = dict(row)
+            stage = u.get("stage")
+
+            # Не трогаем пользователей в ожидании ответа
+            if stage in {"evening_close_wait", "reactivation_wait"}:
+                continue
+
+            trainer_key = u.get("trainer_key") or "marsha"
+            name = (u.get("name") or "").strip()
+            chat_id = u.get("chat_id")
+            if not chat_id:
+                continue
+
+            last_active = float(u.get("last_active") or 0)
+            inactive_seconds = now_ts - last_active if last_active else 10**9
+            day_started_at = float(u.get("day_started_at") or 0)
+
+            # ── Дневной пинг + вечернее закрытие ──
+            # только для тренирующихся, начавших день сегодня
+            if stage in {"training", "waiting_next_day"} and _is_same_day(day_started_at):
+
+                # Анти-слив дни 1–3: прицельный nudge при первой неактивности
+                day_num = int(u.get("day") or 1)
+                if day_num in {1, 2, 3} and inactive_seconds >= 2 * 3600:
+                    if not _is_same_day(float(u.get("last_day_ping_at") or 0)):
+                        hours_passed = round(inactive_seconds / 3600, 1)
+                        msg = anti_churn_message(
+                            u.get("trainer_key") or "marsha",
+                            u.get("mode") or "normal",
+                            day_num,
+                        )
+                        try:
+                            u["last_day_ping_at"] = now_ts
+                            await bot.send_message(
+                                chat_id,
+                                trainer_say(trainer_key, msg),
+                                reply_markup=kb_training_main,
+                            )
+                            await track_user_event(
+                                u,
+                                "training",
+                                "anti_churn_ping",
+                                {"day": day_num, "inactive_hours": hours_passed},
+                            )
+                            await save_user(u, DB_PATH)
+                        except Exception as e:
+                            log.warning(f"Не удалось отправить anti_churn {chat_id}: {e}")
+                        continue  # не дублируем дневной пинг в тот же час
+
+                # Дневной пинг: пользователь начал день, но долго не пишет.
+                if 11 <= now_local.hour < 19 and inactive_seconds >= 3 * 3600:
+                    if not _is_same_day(float(u.get("last_day_ping_at") or 0)):
+                        try:
+                            u["last_day_ping_at"] = now_ts
+                            await bot.send_message(chat_id, trainer_say(trainer_key, daytime_ping(trainer_key, name)))
+                            await track_user_event(
+                                u,
+                                "training",
+                                "day_ping_sent",
+                                {
+                                    "inactive_hours": round(inactive_seconds / 3600, 2),
+                                    "hour": now_local.hour,
+                                },
+                            )
+                            await save_user(u, DB_PATH)
+                        except Exception as e:
+                            log.warning(f"Не удалось отправить дневной пинг {chat_id}: {e}")
+
+                # Вечернее закрытие: один из двух вопросов + варианты ответа.
+                if 20 <= now_local.hour < 23:
+                    if not _is_same_day(float(u.get("last_evening_prompt_at") or 0)):
+                        try:
+                            await bot.send_message(
+                                chat_id,
+                                trainer_say(trainer_key, evening_close_question(trainer_key)),
+                                reply_markup=kb_evening_close,
+                            )
+                            u["last_evening_prompt_at"] = now_ts
+                            u["evening_return_stage"] = stage
+                            u["stage"] = "evening_close_wait"
+                            await save_user(u, DB_PATH)
+                        except Exception as e:
+                            log.warning(f"Не удалось отправить вечернее закрытие {chat_id}: {e}")
+
+            # ── Реактивация молчащих ──
+            # только если пользователь начинал тренировку, но сегодня не появлялся
+            _REACTIVATION_STAGES = {
+                "training", "waiting_next_day", "morning_checkin",
+                "morning_checkin_custom", "await_training_target",
+            }
+            if (
+                int(u.get("has_started_training") or 0) == 1
+                and stage in _REACTIVATION_STAGES
+                and not _is_same_day(day_started_at)
+                and 10 <= now_local.hour < 22
+            ):
+                level = int(u.get("reactivation_level") or 0)
+
+                if inactive_seconds >= 7 * 86400 and level < 4:
+                    try:
+                        u["reactivation_level"] = 4
+                        u["evening_return_stage"] = stage
+                        u["stage"] = "reactivation_wait"
+                        await bot.send_message(
+                            chat_id,
+                            trainer_say(trainer_key, reactivation_7d(trainer_key, name)),
+                            reply_markup=kb_reactivation,
+                        )
+                        await track_user_event(
+                            u,
+                            "reactivation",
+                            "no_response_7d",
+                            {"inactive_hours": round(inactive_seconds / 3600, 1)},
+                        )
+                        await save_user(u, DB_PATH)
+                    except Exception as e:
+                        log.warning(f"Не удалось отправить реактивацию 7d {chat_id}: {e}")
+
+                elif inactive_seconds >= 3 * 86400 and level < 3:
+                    try:
+                        u["reactivation_level"] = 3
+                        u["evening_return_stage"] = stage
+                        u["stage"] = "reactivation_wait"
+                        await bot.send_message(
+                            chat_id,
+                            trainer_say(trainer_key, reactivation_3d(trainer_key, name)),
+                            reply_markup=kb_reactivation,
+                        )
+                        await track_user_event(
+                            u,
+                            "reactivation",
+                            "no_response_3d",
+                            {"inactive_hours": round(inactive_seconds / 3600, 1)},
+                        )
+                        await save_user(u, DB_PATH)
+                    except Exception as e:
+                        log.warning(f"Не удалось отправить реактивацию 3d {chat_id}: {e}")
+
+                elif inactive_seconds >= 24 * 3600 and level < 2:
+                    try:
+                        u["reactivation_level"] = 2
+                        await bot.send_message(
+                            chat_id,
+                            trainer_say(trainer_key, reactivation_24h(trainer_key, name)),
+                        )
+                        await track_user_event(
+                            u,
+                            "reactivation",
+                            "no_response_24h",
+                            {"inactive_hours": round(inactive_seconds / 3600, 1)},
+                        )
+                        await save_user(u, DB_PATH)
+                    except Exception as e:
+                        log.warning(f"Не удалось отправить реактивацию 24h {chat_id}: {e}")
+
+                elif inactive_seconds >= 6 * 3600 and level < 1:
+                    try:
+                        u["reactivation_level"] = 1
+                        await bot.send_message(
+                            chat_id,
+                            trainer_say(trainer_key, reactivation_6h(trainer_key, name)),
+                        )
+                        await track_user_event(
+                            u,
+                            "reactivation",
+                            "no_response_6h",
+                            {"inactive_hours": round(inactive_seconds / 3600, 1)},
+                        )
+                        await save_user(u, DB_PATH)
+                    except Exception as e:
+                        log.warning(f"Не удалось отправить реактивацию 6h {chat_id}: {e}")
+
         await asyncio.sleep(3600)
 
 # ============================================================

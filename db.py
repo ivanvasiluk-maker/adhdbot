@@ -22,9 +22,11 @@ TEST_MODE = os.getenv("TEST_MODE", "").lower() in {"1", "true", "yes", "on", "de
 USER_FIELDS = [
     "user_id",
     "chat_id",
+    "username",
     "name",
     "trainer_key",
     "input_mode",
+    "mode",
     "stage",
     "bucket",
     "analysis_json",
@@ -48,6 +50,14 @@ USER_FIELDS = [
     "return_count",
     "analysis_retry_count",
     "has_started_training",
+    "day_started_at",
+    "last_day_ping_at",
+    "last_evening_prompt_at",
+    "evening_return_stage",
+    "reactivation_level",
+    "last_event",
+    "last_event_at",
+    "stuck_flag",
 ]
 
 def default_user(uid: int) -> Dict[str, Any]:
@@ -55,9 +65,11 @@ def default_user(uid: int) -> Dict[str, Any]:
     return {
         "user_id": uid,
         "chat_id": uid,
+        "username": "",
         "name": None,
         "trainer_key": "marsha",
         "input_mode": "text",   # text | voice | test
+        "mode": "normal",
         "stage": "start",
         "bucket": "mixed",
         "analysis_json": None,
@@ -81,6 +93,14 @@ def default_user(uid: int) -> Dict[str, Any]:
         "return_count": 0,
         "analysis_retry_count": 0,
         "has_started_training": 0,  # Флаг: 1 если юзер начал день 1
+        "day_started_at": 0.0,      # Таймстамп старта текущего дня
+        "last_day_ping_at": 0.0,    # Когда отправляли дневной пинг
+        "last_evening_prompt_at": 0.0,  # Когда отправляли вечернее закрытие
+        "evening_return_stage": None,
+        "reactivation_level": 0,
+        "last_event": "",
+        "last_event_at": 0.0,
+        "stuck_flag": "",
     }
 
 async def init_db(db_path: str):
@@ -91,9 +111,11 @@ async def init_db(db_path: str):
             CREATE TABLE IF NOT EXISTS users (
                 user_id INTEGER PRIMARY KEY,
                 chat_id INTEGER,
+                username TEXT,
                 name TEXT,
                 trainer_key TEXT,
                 input_mode TEXT,
+                mode TEXT,
                 stage TEXT,
                 bucket TEXT,
                 analysis_json TEXT,
@@ -115,7 +137,16 @@ async def init_db(db_path: str):
                 test_answers TEXT,
                 done_count INTEGER,
                 return_count INTEGER,
-                has_started_training INTEGER
+                analysis_retry_count INTEGER,
+                has_started_training INTEGER,
+                day_started_at REAL,
+                last_day_ping_at REAL,
+                last_evening_prompt_at REAL,
+                evening_return_stage TEXT,
+                reactivation_level INTEGER,
+                last_event TEXT,
+                last_event_at REAL,
+                stuck_flag TEXT
             )
             """
         )
@@ -176,6 +207,8 @@ async def save_user(u: Dict[str, Any], db_path: str):
 # ============================================================
 
 EXTRA_USER_COLS = {
+    "username": "TEXT",
+    "mode": "TEXT",
     "points": "INTEGER",
     "level": "INTEGER",
     "streak": "INTEGER",
@@ -192,7 +225,15 @@ EXTRA_USER_COLS = {
     "has_started_training": "INTEGER",  # 1 если юзер начал день 1
     "pending_skill_id": "TEXT",
     "pending_skill_day": "INTEGER",
-    "today_target": "TEXT"
+    "today_target": "TEXT",
+    "day_started_at": "REAL",
+    "last_day_ping_at": "REAL",
+    "last_evening_prompt_at": "REAL",
+    "evening_return_stage": "TEXT",
+    "reactivation_level": "INTEGER",
+    "last_event": "TEXT",
+    "last_event_at": "REAL",
+    "stuck_flag": "TEXT",
 }
 
 async def migrate_db(db_path: str):
@@ -217,9 +258,91 @@ async def migrate_db(db_path: str):
         """)
         await db.commit()
 
-async def log_event(user_id: int, stage: str, event: str, meta: dict = None, db_path: str = "bot.db", sheets_webhook_url: str = ""):
-    """Залогировать событие в БД и опционально в GSheets"""
-    meta_s = json.dumps(meta or {}, ensure_ascii=False)
+def compute_stuck_flag(u: dict) -> str:
+    """Return a coarse stuck-state label for summary exports."""
+    stage = u.get("stage") or ""
+    analysis_retry = int(u.get("analysis_retry_count") or 0)
+    crisis_count = int(u.get("crisis_count") or 0)
+    reactivation_level = int(u.get("reactivation_level") or 0)
+    done_count = int(u.get("done_count") or 0)
+    day = int(u.get("day") or 1)
+
+    if stage == "confirm_analysis":
+        return "stuck_after_analysis"
+    if stage == "analysis_contract":
+        return "stuck_after_contract"
+    if day == 1 and done_count == 0 and stage in {"training", "waiting_next_day"}:
+        return "stuck_day1_no_result"
+    if analysis_retry >= 2:
+        return "high_doubt"
+    if crisis_count >= 3:
+        return "high_crisis_usage"
+    if reactivation_level >= 2:
+        return "reactivation_risk"
+    return ""
+
+
+async def push_user_summary(u: dict, sheets_webhook_url: str = ""):
+    """Push a flattened user summary to the webhook for dashboarding."""
+    if not sheets_webhook_url:
+        return
+
+    try:
+        import urllib.request
+
+        payload = json.dumps({
+            "kind": "user_summary",
+            "updated_at": time.strftime("%Y-%m-%d %H:%M:%S"),
+            "user_id": u.get("user_id"),
+            "chat_id": u.get("chat_id"),
+            "username": u.get("username"),
+            "name": u.get("name"),
+            "trainer_key": u.get("trainer_key"),
+            "mode": u.get("mode"),
+            "input_mode": u.get("input_mode"),
+            "stage": u.get("stage"),
+            "bucket": u.get("bucket"),
+            "day": u.get("day"),
+            "trial_phase": u.get("trial_phase"),
+            "today_target": u.get("today_target"),
+            "points": u.get("points", 0),
+            "level": u.get("level", 1),
+            "streak": u.get("streak", 0),
+            "done_count": u.get("done_count", 0),
+            "return_count": u.get("return_count", 0),
+            "crisis_count": u.get("crisis_count", 0),
+            "analysis_retry_count": u.get("analysis_retry_count", 0),
+            "reactivation_level": u.get("reactivation_level", 0),
+            "last_active": u.get("last_active"),
+            "last_event": u.get("last_event"),
+            "last_event_at": u.get("last_event_at"),
+            "is_paid": 1 if u.get("trial_phase") == "paid" else 0,
+            "stuck_flag": u.get("stuck_flag", ""),
+        }, ensure_ascii=False).encode("utf-8")
+
+        req = urllib.request.Request(
+            sheets_webhook_url,
+            data=payload,
+            headers={"Content-Type": "application/json"},
+            method="POST",
+        )
+        urllib.request.urlopen(req, timeout=3).read()
+    except Exception:
+        pass
+
+
+async def log_event(
+    user_id: int,
+    stage: str,
+    event: str,
+    meta: dict = None,
+    db_path: str = "bot.db",
+    sheets_webhook_url: str = "",
+    user_snapshot: dict = None,
+):
+    """Log an event to SQLite and optionally send an expanded webhook payload."""
+    meta = meta or {}
+    meta_s = json.dumps(meta, ensure_ascii=False)
     ts = time.time()
     async with aiosqlite.connect(db_path) as db:
         await db.execute(
@@ -231,19 +354,32 @@ async def log_event(user_id: int, stage: str, event: str, meta: dict = None, db_
     if sheets_webhook_url:
         try:
             import urllib.request
+
+            snap = user_snapshot or {}
             payload = json.dumps({
+                "kind": "event",
                 "ts": ts,
                 "user_id": user_id,
+                "chat_id": snap.get("chat_id"),
+                "username": snap.get("username"),
+                "name": snap.get("name"),
+                "trainer_key": snap.get("trainer_key"),
+                "mode": snap.get("mode"),
+                "input_mode": snap.get("input_mode"),
                 "stage": stage,
                 "event": event,
-                "meta": meta or {}
+                "day": snap.get("day"),
+                "bucket": snap.get("bucket"),
+                "trial_phase": snap.get("trial_phase"),
+                "today_target": snap.get("today_target"),
+                "meta": meta,
             }, ensure_ascii=False).encode("utf-8")
 
             req = urllib.request.Request(
                 sheets_webhook_url,
                 data=payload,
-                headers={"Content-Type":"application/json"},
-                method="POST"
+                headers={"Content-Type": "application/json"},
+                method="POST",
             )
             urllib.request.urlopen(req, timeout=3).read()
         except Exception:

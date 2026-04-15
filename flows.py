@@ -17,10 +17,18 @@ from texts import (
     trainer_say, skill_explain, PRAISE, DAILY_LIVE_LINES,
     day_task_text, midday_ping, TRAINER_INTRO_TEXT,
     kb_yes_no, kb_training_main, kb_crisis_mode,
-    CRISIS_LIMIT,
+    CRISIS_LIMIT, kb_morning_checkin, get_morning_checkin_opener,
 )
 from skills import SKILLS_DB, get_current_plan, build_28_day_plan, build_plan
-from db import get_user, save_user, log_event, USER_FIELDS, is_paid
+from db import (
+    get_user,
+    save_user,
+    log_event,
+    USER_FIELDS,
+    is_paid,
+    push_user_summary,
+    compute_stuck_flag,
+)
 
 # Logging
 log = logging.getLogger("bot")
@@ -34,6 +42,15 @@ def clamp_str(s: str, n: int = 1400) -> str:
     if len(s) <= n:
         return s
     return s[: n - 3] + "..."
+
+
+async def sync_user_summary_state(u: Dict[str, Any], db_path: str, sheets_webhook: str = "", last_event: str = ""):
+    if last_event:
+        u["last_event"] = last_event
+        u["last_event_at"] = time.time()
+    u["stuck_flag"] = compute_stuck_flag(u)
+    await save_user(u, db_path)
+    await push_user_summary(u, sheets_webhook)
 
 # ============================================================
 # TRAINER PHOTO SENDING
@@ -110,10 +127,14 @@ async def start_day(m: Message, u: dict, day: int, db_path: str, sheets_webhook:
         await save_user(u, db_path)
     skill = SKILLS_DB[sid]
 
+    trainer_key = u.get("trainer_key") or "marsha"
+
     u["day"] = day
-    u["stage"] = "await_training_target"
+    u["stage"] = "morning_checkin"
     u["pending_skill_id"] = sid
     u["pending_skill_day"] = day
+    u["has_started_training"] = 1
+    u["day_started_at"] = time.time()
     await save_user(u, db_path)
 
     # Утренний быстрый чек — только начиная со 2-го дня
@@ -123,17 +144,9 @@ async def start_day(m: Message, u: dict, day: int, db_path: str, sheets_webhook:
         energy = u.get("last_energy") or "?"
         await m.answer(f"🕒 Быстрый чек\nСон: {sleep}\nТревога: {anxiety}\nЭнергия: {energy}")
 
-    # Вопрос перед выдачей навыка
-    question = (
-        "Перед стартом: что ты прокрастинируешь сегодня?\n"
-        "Одна задача/дело, на котором потренируемся.\n"
-        "Напиши коротко или нажми 'Пропустить'."
-    )
-    skip_kb = ReplyKeyboardMarkup(
-        keyboard=[[KeyboardButton(text="Пропустить")]],
-        resize_keyboard=True
-    )
-    await m.answer(question, reply_markup=skip_kb)
+    opener = get_morning_checkin_opener(trainer_key)
+    question = "Что у тебя сегодня на уме?"
+    await m.answer(trainer_say(trainer_key, f"{opener}\n\n{question}"), reply_markup=kb_morning_checkin)
 
     # 2️⃣ +1 балл прогресса
     u["points"] = int(u.get("points") or 0) + 1
@@ -202,20 +215,20 @@ async def start_day_simple(m: Message, u: Dict[str, Any], day: int, db_path: str
     )
     await m.answer(trainer_say(trainer_key, msg), reply_markup=kb_training_main)
 
+    trainer_key = u.get("trainer_key") or "marsha"
+
     u["day"] = day
-    u["stage"] = "await_training_target"
+    u["stage"] = "morning_checkin"
     u["pending_skill_id"] = sid
     u["pending_skill_day"] = day
+    u["has_started_training"] = 1
+    u["day_started_at"] = time.time()
     await save_user(u, db_path)
 
+    opener = get_morning_checkin_opener(trainer_key)
     await m.answer(
-        "Перед стартом: что ты прокрастинируешь сегодня?\n"
-        "Одна задача/дело, на котором потренируемся.\n"
-        "Напиши коротко или нажми 'Пропустить'.",
-        reply_markup=ReplyKeyboardMarkup(
-            keyboard=[[KeyboardButton(text="Пропустить")]],
-            resize_keyboard=True
-        )
+        trainer_say(trainer_key, f"{opener}\n\nЧто у тебя сегодня на уме?"),
+        reply_markup=kb_morning_checkin,
     )
 
 async def advance_day(m: Message, u: Dict[str, Any], next_day: int, db_path: str):
@@ -239,13 +252,21 @@ async def handle_crisis(m: Message, u: dict, user_text: str, db_path: str, sheet
 
     # increment first; limit free crisis uses
     u["crisis_count"] = int(u.get("crisis_count") or 0) + 1
-    await save_user(u, db_path)
+    await sync_user_summary_state(u, db_path, sheets_webhook, "crisis_message")
 
     if not is_paid(u) and int(u.get("crisis_count") or 0) > CRISIS_LIMIT:
         await m.answer("🆘 Кризис — доступен без ограничений в полной версии.")
         return
 
-    await log_event(u["user_id"], u.get("stage",""), "crisis_message", {"len": len(user_text)}, db_path, sheets_webhook)
+    await log_event(
+        u["user_id"],
+        u.get("stage", ""),
+        "crisis_message",
+        {"len": len(user_text)},
+        db_path,
+        sheets_webhook,
+        user_snapshot=u,
+    )
     gamify_apply(u, 1, "crisis_used")
 
     await m.answer(trainer_say(trainer_key, "Ок. Сейчас быстро стабилизируем и вернём контроль."))
@@ -396,46 +417,56 @@ def _extract_json(text: str) -> Optional[dict]:
 
 async def ai_analyze(user_text: str, client=None, model: str = "gpt-4o-mini") -> dict:
     """Быстрый AI анализ"""
-    if not (client and model):
-        return {
-            "bucket": "mixed",
-            "summary": "Похоже на смешанный профиль: немного тревоги + избегание + низкий ресурс.",
-            "confidence": 0.55,
-            "top_signals": ["избегание", "тревога", "низкая энергия"],
-            "first_action": "Сделай один микро-старт ≤ 2 минут."
-        }
-
-    from texts import build_ai_system_prompt
-    system = build_ai_system_prompt()
-    resp = client.chat.completions.create(
-        model=model,
-        messages=[
-            {"role": "system", "content": system},
-            {"role": "user", "content": clamp_str(user_text, 1500)},
-        ],
-        temperature=0.3,
-    )
-    data = _extract_json(resp.choices[0].message.content or "")
-    if not data:
-        return {
-            "bucket": "mixed",
-            "summary": "Похоже на смешанный профиль: тревога/энергия/внимание пересекаются.",
-            "confidence": 0.45,
-            "top_signals": ["смешанные сигналы"],
-            "first_action": "Сделай один микро-старт ≤ 2 минут."
-        }
-
-    bucket = data.get("bucket") or "mixed"
-    if bucket not in ("anxiety", "low_energy", "distractibility", "mixed"):
-        bucket = "mixed"
-
-    return {
-        "bucket": bucket,
-        "summary": clamp_str(data.get("summary") or "", 400),
-        "confidence": float(data.get("confidence") or 0.5),
-        "top_signals": data.get("top_signals") or [],
-        "first_action": clamp_str(data.get("first_action") or "", 300),
+    fallback = {
+        "bucket": "mixed",
+        "summary": "Ты не сломан(а). Сейчас просто тяжело с входом в задачу.",
+        "confidence": 0.42,
+        "top_signals": ["сложно начать", "быстрое переключение"],
+        "first_action": "Выбери самый лёгкий шаг и сделай 60-120 секунд.",
     }
+    log.info("[ANALYSIS] ai_analyze start")
+    try:
+        if not (client and model):
+            log.info("[ANALYSIS] ai_analyze finish: fallback(no client/model)")
+            return dict(fallback)
+
+        from texts import build_ai_system_prompt
+        system = build_ai_system_prompt()
+        resp = client.chat.completions.create(
+            model=model,
+            messages=[
+                {"role": "system", "content": system},
+                {"role": "user", "content": clamp_str(user_text, 1500)},
+            ],
+            temperature=0.3,
+        )
+        data = _extract_json(resp.choices[0].message.content or "")
+        if not data:
+            log.info("[ANALYSIS] ai_analyze finish: fallback(no json)")
+            return dict(fallback)
+
+        bucket = data.get("bucket") or "mixed"
+        if bucket not in ("anxiety", "low_energy", "distractibility", "mixed"):
+            bucket = "mixed"
+
+        confidence = data.get("confidence")
+        try:
+            confidence = float(confidence) if confidence is not None else 0.5
+        except Exception:
+            confidence = 0.5
+
+        result = {
+            "bucket": bucket,
+            "summary": clamp_str(data.get("summary") or fallback["summary"], 400),
+            "confidence": confidence,
+            "top_signals": data.get("top_signals") or fallback["top_signals"],
+            "first_action": clamp_str(data.get("first_action") or fallback["first_action"], 300),
+        }
+        log.info(f"[ANALYSIS] ai_analyze finish: bucket={result['bucket']}")
+        return result
+    except Exception:
+        log.exception("[ANALYSIS] ai_analyze failed, using fallback")
+        return dict(fallback)
 
     # Мини-ИИ-рефлексия после выполнения
     async def ai_micro_reflect(user_text: str, trainer_key: str) -> str:
@@ -472,30 +503,31 @@ async def ai_analyze(user_text: str, client=None, model: str = "gpt-4o-mini") ->
 async def ai_analyze_comprehensive(user_text: str, trainer_key: str = "marsha", client=None, model: str = "gpt-4o-mini") -> dict:
     """Подробный AI анализ"""
     from texts import AI_ANALYSIS_SYSTEM_PROMPT
-    
-    if not (client and model):
-        log.warning("ai_analyze_comprehensive fallback: no client or model")
-        return {
-            "bucket": "mixed",
-            "short_summary": "Похоже, у тебя смешанный профиль: вход в задачу тяжёлый, есть тревога и отвлекаемость.",
-            "what_is_happening": "Тебе сложно начинать важные дела, а когда возникает напряжение, внимание быстро уходит в более лёгкие стимулы.",
-            "why_it_happens": "Мозг уходит от дискомфорта старта и выбирает более быструю разрядку — видео, переключения, доработки без конца.",
-            "not_your_fault_or_control_zone": "Это не про слабость характера. Это паттерн саморегуляции, который можно перестроить.",
-            "why_change_is_possible": "Если тренировать запуск, удержание и возврат, поведение начинает меняться довольно заметно.",
-            "training_path": "Сначала упрощаем старт, потом учим мозг не убегать, потом укрепляем возврат без самонаказания.",
-            "skills_focus": ["запуск", "удержание внимания", "возврат без самокритики"],
-            "timeline": "Первые сдвиги обычно заметны за 2–3 недели, устойчивость — за 4–8 недель.",
-            "support_guarantee": "Если навык не подойдёт, маршрут можно поменять.",
-            "closing_reassurance": "Это не тупик. Это тренируется."
-        }
+    fallback = {
+        "bucket": "mixed",
+        "short_summary": "Сейчас перегруз, и это объяснимо.",
+        "what_is_happening": "На старте задачи появляется напряжение, и внимание уходит в более простые действия.",
+        "why_it_happens": "Когда слишком много давления, мозг выбирает то, где легче получить быстрый выдох.",
+        "not_your_fault_or_control_zone": "С тобой все ок. Это рабочий паттерн, который можно перенастроить.",
+        "why_change_is_possible": "Если тренировать короткий старт и спокойный возврат, становится заметно легче.",
+        "training_path": "Идем маленькими шагами: запуск, удержание, мягкий возврат.",
+        "skills_focus": ["короткий старт", "удержание фокуса", "возврат без самокритики"],
+        "timeline": "Первые сдвиги часто видны за 2-3 недели.",
+        "support_guarantee": "Если что-то не заходит, спокойно подберем другой путь.",
+        "closing_reassurance": "Ты не один(одна), и с этим реально справиться.",
+    }
+    log.info("[ANALYSIS] ai_analyze_comprehensive start")
+    try:
+        if not (client and model):
+            log.info("[ANALYSIS] ai_analyze_comprehensive finish: fallback(no client/model)")
+            return dict(fallback)
 
-    system = AI_ANALYSIS_SYSTEM_PROMPT
-    
-    resp = client.chat.completions.create(
-        model=model,
-        messages=[
-            {"role": "system", "content": system},
-            {"role": "user", "content": f"""Проанализируй следующее описание и верни JSON с этой структурой:
+        system = AI_ANALYSIS_SYSTEM_PROMPT
+        resp = client.chat.completions.create(
+            model=model,
+            messages=[
+                {"role": "system", "content": system},
+                {"role": "user", "content": f"""Проанализируй следующее описание и верни JSON с этой структурой:
 {{
   "bucket": "anxiety|low_energy|distractibility|mixed",
   "short_summary": "краткое резюме",
@@ -512,83 +544,109 @@ async def ai_analyze_comprehensive(user_text: str, trainer_key: str = "marsha", 
 
 Описание человека:
 {clamp_str(user_text, 1500)}"""},
-        ],
-        temperature=0.3,
-    )
-    data = _extract_json(resp.choices[0].message.content or "")
-    if not data:
-        return {
-            "bucket": "mixed",
-            "short_summary": "Похоже на смешанный профиль: несколько вызовов одновременно.",
-            "what_is_happening": "Тебе сложно с несколькими аспектами одновременно.",
-            "why_it_happens": "Разные функции мозга перегружены одновременно.",
-            "not_your_fault_or_control_zone": "Это не твоя вина. Это паттерн, который тренируется.",
-            "why_change_is_possible": "С правильной тренировкой все эти навыки развиваются.",
-            "training_path": "Шаг за шагом, с мягкой поддержкой.",
-            "skills_focus": ["начало", "удержание", "возврат"],
-            "timeline": "Первые сдвиги - 2–3 недели.",
-            "support_guarantee": "Мы найдём подходящий метод для тебя.",
-            "closing_reassurance": "Ты справишься."
+            ],
+            temperature=0.3,
+        )
+        data = _extract_json(resp.choices[0].message.content or "")
+        if not data:
+            log.info("[ANALYSIS] ai_analyze_comprehensive finish: fallback(no json)")
+            return dict(fallback)
+
+        result = {
+            "bucket": data.get("bucket") or "mixed",
+            "short_summary": clamp_str(data.get("short_summary") or fallback["short_summary"], 200),
+            "what_is_happening": clamp_str(data.get("what_is_happening") or fallback["what_is_happening"], 400),
+            "why_it_happens": clamp_str(data.get("why_it_happens") or fallback["why_it_happens"], 400),
+            "not_your_fault_or_control_zone": clamp_str(data.get("not_your_fault_or_control_zone") or fallback["not_your_fault_or_control_zone"], 400),
+            "why_change_is_possible": clamp_str(data.get("why_change_is_possible") or fallback["why_change_is_possible"], 400),
+            "training_path": clamp_str(data.get("training_path") or fallback["training_path"], 400),
+            "skills_focus": data.get("skills_focus") or fallback["skills_focus"],
+            "timeline": clamp_str(data.get("timeline") or fallback["timeline"], 200),
+            "support_guarantee": clamp_str(data.get("support_guarantee") or fallback["support_guarantee"], 200),
+            "closing_reassurance": clamp_str(data.get("closing_reassurance") or fallback["closing_reassurance"], 200),
         }
 
-    # Ensure all required fields exist
-    result = {
-        "bucket": data.get("bucket") or "mixed",
-        "short_summary": clamp_str(data.get("short_summary") or "", 200),
-        "what_is_happening": clamp_str(data.get("what_is_happening") or "", 400),
-        "why_it_happens": clamp_str(data.get("why_it_happens") or "", 400),
-        "not_your_fault_or_control_zone": clamp_str(data.get("not_your_fault_or_control_zone") or "", 400),
-        "why_change_is_possible": clamp_str(data.get("why_change_is_possible") or "", 400),
-        "training_path": clamp_str(data.get("training_path") or "", 400),
-        "skills_focus": data.get("skills_focus") or ["внимание", "начало", "поддержание"],
-        "timeline": clamp_str(data.get("timeline") or "", 200),
-        "support_guarantee": clamp_str(data.get("support_guarantee") or "", 200),
-        "closing_reassurance": clamp_str(data.get("closing_reassurance") or "", 200),
-    }
+        bucket = result.get("bucket") or "mixed"
+        if bucket not in ("anxiety", "low_energy", "distractibility", "mixed"):
+            result["bucket"] = "mixed"
 
-    bucket = result.get("bucket") or "mixed"
-    if bucket not in ("anxiety", "low_energy", "distractibility", "mixed"):
-        result["bucket"] = "mixed"
-
-    return result
+        log.info(f"[ANALYSIS] ai_analyze_comprehensive finish: bucket={result['bucket']}")
+        return result
+    except Exception:
+        log.exception("[ANALYSIS] ai_analyze_comprehensive failed, using fallback")
+        return dict(fallback)
 
 async def run_analysis(m: Message, u: Dict[str, Any], user_text: str, db_path: str, sheets_webhook: str = "", client=None, model: str = "gpt-4o-mini"):
     """Запустить анализ"""
     from texts import kb_analysis_confirm
+    log.info("[ANALYSIS] run_analysis start")
+    try:
+        r = await ai_analyze(user_text, client, model)
+        comp = await ai_analyze_comprehensive(user_text, u.get("trainer_key", "marsha"), client, model)
 
-    r = await ai_analyze(user_text, client, model)
-    comp = await ai_analyze_comprehensive(user_text, u.get("trainer_key", "marsha"), client, model)
+        bucket = comp.get("bucket") or r.get("bucket") or "mixed"
+        u["bucket"] = bucket
 
-    bucket = comp.get("bucket") or r.get("bucket") or "mixed"
-    u["bucket"] = bucket
+        comp_to_store = dict(comp)
+        comp_to_store["user_text"] = clamp_str(user_text, 1000)
+        u["analysis_json"] = json.dumps(comp_to_store, ensure_ascii=False)
 
-    comp_to_store = dict(comp)
-    comp_to_store["user_text"] = clamp_str(user_text, 1000)
-    u["analysis_json"] = json.dumps(comp_to_store, ensure_ascii=False)
+        plan_ids = build_28_day_plan(bucket)
+        u["plan_json"] = json.dumps(plan_ids, ensure_ascii=False)
+        u["day"] = 1
+        u["stage"] = "confirm_analysis"
 
-    plan_ids = build_28_day_plan(bucket)
-    u["plan_json"] = json.dumps(plan_ids, ensure_ascii=False)
-    u["day"] = 1
-    u["stage"] = "confirm_analysis"
+        await sync_user_summary_state(u, db_path, sheets_webhook, "analysis_shown")
+        await log_event(
+            u["user_id"],
+            "analysis",
+            "analysis_shown",
+            {"bucket": u.get("bucket")},
+            db_path,
+            sheets_webhook,
+            user_snapshot=u,
+        )
 
-    await save_user(u, db_path)
-    await log_event(u["user_id"], "analysis", "analysis_shown", {"bucket": u.get("bucket")}, db_path, sheets_webhook)
+        short_text = (comp.get("short_summary") or r.get("summary") or "Вижу знакомый паттерн.").strip()
+        main_knot = (comp.get("why_it_happens") or "Самый сложный момент - вход в задачу под внутренним давлением.").strip()
+        skills_focus = comp.get("skills_focus") or ["мягкий старт", "удержание фокуса", "возврат без самокритики"]
+        focus_line = ", ".join([str(x).strip() for x in skills_focus if str(x).strip()]) or "мягкий старт, удержание фокуса, возврат"
 
-    short_text = comp.get("short_summary") or r.get("summary") or "Похоже на тебя?"
+        short_review = (
+            f"Что я вижу:\n{short_text}\n\n"
+            f"Главный узел:\n{main_knot}\n\n"
+            f"На что будет упор:\n{focus_line}\n\n"
+            "Это похоже на тебя?"
+        )
 
-    details = (
-        f"{short_text}\n\n"
-        f"Что происходит:\n{comp.get('what_is_happening', '—')}\n\n"
-        f"Почему так:\n{comp.get('why_it_happens', '—')}\n\n"
-        f"Почему это не про \"лень\" или \"слабость\":\n{comp.get('not_your_fault_or_control_zone', '—')}\n\n"
-        f"Почему это можно изменить:\n{comp.get('why_change_is_possible', '—')}\n\n"
-        f"На что будет упор:\n• " + "\n• ".join(comp.get("skills_focus", [])) + "\n\n"
-        f"Сроки:\n{comp.get('timeline', '—')}\n\n"
-        f"{comp.get('closing_reassurance', 'Это можно изменить.')}\n\n"
-        "Это похоже на тебя?"
-    )
-
-    await m.answer(details, reply_markup=kb_analysis_confirm)
+        await m.answer(short_review, reply_markup=kb_analysis_confirm)
+        log.info(f"[ANALYSIS] run_analysis finish: success, bucket={bucket}")
+    except Exception:
+        log.exception("[ANALYSIS] run_analysis failed")
+        try:
+            u["stage"] = "await_problem_text"
+            await save_user(u, db_path)
+            await m.answer(
+                "Похоже, сейчас анализ не открылся. Давай просто попробуем ещё раз: опиши, что больше всего мешает начать сегодня."
+            )
+            log.info("[ANALYSIS] run_analysis finish: fallback to await_problem_text")
+        except Exception:
+            log.exception("[ANALYSIS] run_analysis fallback failed, forcing confirm_analysis")
+            u["stage"] = "confirm_analysis"
+            u["bucket"] = u.get("bucket") or "mixed"
+            try:
+                await save_user(u, db_path)
+            except Exception:
+                log.exception("[ANALYSIS] run_analysis could not save forced confirm_analysis stage")
+            try:
+                await m.answer(
+                    "Сейчас отвечу коротко: старт перегружен, это поправимо."
+                    " Начнём с малого шага и подстроим план по ходу."
+                    " Ок, двигаемся?",
+                    reply_markup=kb_analysis_confirm,
+                )
+            except Exception:
+                log.exception("[ANALYSIS] run_analysis could not send forced confirm_analysis message")
 
 # ============================================================
 # PROGRESS & REPORTS
@@ -651,4 +709,12 @@ async def send_progress_report(m: Message, u: dict, db_path: str):
         f"➡️ Следующий навык по плану: {next_skill}"
     )
     await m.answer(msg)
-    await log_event(uid, u.get("stage",""), "progress_view", {"done": done, "return": ret, "crisis": crisis}, db_path)
+    await sync_user_summary_state(u, db_path, last_event="progress_view")
+    await log_event(
+        uid,
+        u.get("stage", ""),
+        "progress_view",
+        {"done": done, "return": ret, "crisis": crisis},
+        db_path,
+        user_snapshot=u,
+    )
