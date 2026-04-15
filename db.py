@@ -328,7 +328,7 @@ async def push_user_summary(u: dict, sheets_webhook_url: str = ""):
         )
         urllib.request.urlopen(req, timeout=3).read()
     except Exception as e:
-        log.exception(f"SHEETS ERROR: {e}")
+        log.exception(f"SHEETS ERROR in push_user_summary: {e}")
 
 
 async def log_event(
@@ -383,7 +383,7 @@ async def log_event(
             )
             urllib.request.urlopen(req, timeout=3).read()
         except Exception as e:
-            log.exception(f"SHEETS ERROR: {e}")
+            log.exception(f"SHEETS ERROR in log_event: {e}")
 
 def gamify_apply(u: dict, delta_points: int, reason: str):
     """Применить геймификацию"""
