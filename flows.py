@@ -18,6 +18,7 @@ from texts import (
     day_task_text, midday_ping, TRAINER_INTRO_TEXT,
     kb_yes_no, kb_training_main, kb_crisis_mode,
     CRISIS_LIMIT, kb_morning_checkin, get_morning_checkin_opener,
+    emotional_hook, get_daytime_greeting,
 )
 from skills import SKILLS_DB, get_current_plan, build_28_day_plan, build_plan
 from db import (
@@ -137,6 +138,41 @@ async def start_day(m: Message, u: dict, day: int, db_path: str, sheets_webhook:
     u["day_started_at"] = time.time()
     await save_user(u, db_path)
 
+    # День 2: персональный план
+    if day == 2:
+        from texts import day2_personal_plan_text
+        target = u.get("today_target") or ""
+        await m.answer(
+            trainer_say(
+                trainer_key,
+                day2_personal_plan_text(
+                    u.get("name") or "друг",
+                    trainer_key,
+                    u.get("bucket") or "mixed",
+                    target
+                )
+            )
+        )
+
+    # Анти-слив текст на дни 1-3
+    if day in {1, 2, 3}:
+        from texts import anti_churn_day_text
+        anti_text = anti_churn_day_text(day, trainer_key)
+        if anti_text:
+            await m.answer(trainer_say(trainer_key, anti_text))
+
+    metrics = u.get("metrics") or {}
+    try:
+        starts_progress = int(metrics.get("starts") or 0)
+    except (TypeError, ValueError):
+        starts_progress = 0
+    await m.answer(
+        trainer_say(
+            trainer_key,
+            f"{get_daytime_greeting()}.\n{emotional_hook(u.get('day') or day, starts_progress)}",
+        )
+    )
+
     # Утренний быстрый чек — только начиная со 2-го дня
     if day > 1:
         sleep = u.get("last_sleep") or "?"
@@ -165,6 +201,42 @@ async def start_day(m: Message, u: dict, day: int, db_path: str, sheets_webhook:
 
     u["last_active"] = now
     await save_user(u, db_path)
+
+    # Запуск отложенного анти-слива пинга через 5 минут (дни 1-3)
+    if day in {1, 2, 3}:
+        asyncio.create_task(
+            _delayed_anti_churn_check(m.bot, m.chat.id, trainer_key, day)
+        )
+
+
+async def _delayed_anti_churn_check(bot, chat_id: int, trainer_key: str, day_num: int):
+    """Пинг через 5 минут, если человек молчит (дни 1-3)"""
+    await asyncio.sleep(300)
+
+    try:
+        from texts import trainer_say
+        from aiogram.types import KeyboardButton, ReplyKeyboardMarkup
+
+        follow_texts = {
+            1: "Как идёт? Ты уже попробовал или пока стоишь на входе?",
+            2: "Второй день часто буксует. Ты уже зашёл в задачу хотя бы на минуту?",
+            3: "Третий день. Получилось снова войти или пока сопротивление сильнее?",
+        }
+        txt = follow_texts.get(day_num, "Как идёт?")
+        await bot.send_message(
+            chat_id,
+            trainer_say(trainer_key, txt),
+            reply_markup=ReplyKeyboardMarkup(
+                keyboard=[
+                    [KeyboardButton(text="✅ Сделал(а)")],
+                    [KeyboardButton(text="↩️ Вернулся(лась)")],
+                    [KeyboardButton(text="🆘 Кризис")],
+                ],
+                resize_keyboard=True
+            )
+        )
+    except Exception:
+        pass
 
 async def start_day1(m: Message, u: Dict[str, Any], db_path: str):
     """День 1 - специальный скрипт"""

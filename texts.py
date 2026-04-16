@@ -5,6 +5,7 @@
 import json
 import math
 import random
+from datetime import datetime
 from typing import Dict, Any, Optional, List
 from aiogram.types import KeyboardButton, ReplyKeyboardMarkup, InlineKeyboardMarkup, InlineKeyboardButton
 from skills_texts import SKILLS_TEXTS
@@ -95,6 +96,31 @@ TRAINER_INTRO_TEXT = {
 def trainer_say(trainer_key: str, text: str) -> str:
     t = TRAINERS.get(trainer_key, TRAINERS["marsha"])
     return f"{t['emoji']} *{t['name']}*: {text}"
+
+
+def get_daytime_greeting() -> str:
+    hour = datetime.now().hour
+
+    if 5 <= hour < 12:
+        return "Доброе утро"
+    if 12 <= hour < 18:
+        return "Добрый день"
+    if 18 <= hour < 23:
+        return "Добрый вечер"
+    return "Привет"
+
+
+def emotional_hook(day: int, progress: int) -> str:
+    if day == 1:
+        return "Ты уже начал. Это важнее, чем кажется."
+
+    if day == 2:
+        return "Мы не начинаем заново. Мы продолжаем."
+
+    if progress >= 3:
+        return f"Это уже {progress} запуск. Ты двигаешься."
+
+    return "Важно не идеально. Важно - не выпадать."
 
 
 async def send_trainer_introduction(m, u):
@@ -340,21 +366,48 @@ def create_test_question_keyboard(question_id: int) -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(inline_keyboard=buttons)
 
 
+def _skill_format_parts(skill: dict):
+    goal = skill.get("goal") or ""
+    step1 = skill.get("step1") or ""
+    step2 = skill.get("step2") or ""
+    step3 = skill.get("step3") or ""
+
+    if not any([step1, step2, step3]):
+        raw_steps = skill.get("simple") or skill.get("steps") or []
+        if raw_steps:
+            step1 = raw_steps[0] if len(raw_steps) > 0 else ""
+            step2 = raw_steps[1] if len(raw_steps) > 1 else ""
+            step3 = raw_steps[2] if len(raw_steps) > 2 else ""
+        elif skill.get("how"):
+            step1 = skill.get("how") or ""
+
+    micro = skill.get("micro") or skill.get("minimum") or step1
+    why = skill.get("why_short") or skill.get("explain") or ""
+    return goal, step1, step2, step3, micro, why
+
+
 def skill_explain(trainer_key: str, skill: dict) -> str:
-    steps = skill.get("steps") or ([] if not skill.get("how") else [skill.get("how")])
-    if trainer_key == "skinny":
-        first = steps[0] if steps else skill.get("how", "")
-        return f"Делай так:\n{first}\nХватит."
-    if trainer_key == "beck":
-        return (
-            f"Почему работает:\n{skill.get('why', skill.get('goal',''))}\n\n"
-            "Шаги:\n" + "\n".join(steps)
-        )
-    return (
-        "Спокойно. Без давления.\n\n" +
-        "\n".join(steps) +
-        f"\n\nДаже {skill.get('micro', skill.get('minimum',''))} — считается."
-    )
+    goal, step1, step2, step3, micro, why = _skill_format_parts(skill)
+    if not why:
+        why = "Это снижает порог входа и помогает не выпасть сразу."
+
+    parts = []
+
+    if goal:
+        parts.append(f"🎯 Зачем: {goal}")
+
+    if step1:
+        parts.append(f"\n👉 Делай раз: {step1}")
+    if step2:
+        parts.append(f"👉 Делай два: {step2}")
+    if step3:
+        parts.append(f"👉 Делай три: {step3}")
+    if micro:
+        parts.append(f"\n⚡ Минимум: {micro}")
+    if why:
+        parts.append(f"\n🧠 Почему это работает: {why}")
+
+    return "\n".join(parts)
 
 # Раскрытая подача навыка для кнопки «ℹ️ Подробнее»
 TRACK_RATIONALE = {
@@ -365,22 +418,31 @@ TRACK_RATIONALE = {
 }
 
 def skill_detail_text(skill: dict) -> str:
+    """Форматирует навык в стандартный вид: Зачем / Делай раз / Минимум / Почему"""
     name = skill.get("name", "Навык")
-    goal = skill.get("goal", "")
-    steps = skill.get("steps") or ([skill.get("how")] if skill.get("how") else [])
-    how_more = skill.get("how_more", "")
-    micro = skill.get("micro", skill.get("minimum", ""))
-    track_reason = TRACK_RATIONALE.get(skill.get("track"), "Помогает вернуться в действие без перегруза.")
+    goal, step1, step2, step3, micro, why = _skill_format_parts(skill)
+    if not why:
+        why = "Это снижает порог входа и помогает не выпасть сразу."
 
-    parts = [f"🧩 {name}", f"🎯 Зачем: {goal}"]
-    if how_more:
-        parts.append(f"🔹 Как работает: {how_more}")
-    elif steps:
-        parts.append("🔹 Шаги:\n" + "\n".join([f"{i+1}. {s}" for i, s in enumerate(steps) if s]))
+    parts = [f"🧩 {name}"]
+
+    if goal:
+        parts.append(f"\n🎯 Зачем: {goal}")
+
+    if step1:
+        parts.append(f"\n👉 Делай раз: {step1}")
+    if step2:
+        parts.append(f"👉 Делай два: {step2}")
+    if step3:
+        parts.append(f"👉 Делай три: {step3}")
+
     if micro:
-        parts.append(f"⚡ Минимум: {micro}")
-    parts.append(f"🧠 Почему помогает при прокрастинации: {track_reason}")
-    return "\n\n".join([p for p in parts if p.strip()])
+        parts.append(f"\n⚡ Минимум: {micro}")
+
+    if why:
+        parts.append(f"\n🧠 Почему это работает: {why}")
+
+    return "\n".join(parts)
 
 # ============================================================
 # 3) KEYBOARDS
@@ -822,6 +884,14 @@ kb_pay_choice = ReplyKeyboardMarkup(
     resize_keyboard=True
 )
 
+kb_payment_continue = ReplyKeyboardMarkup(
+    keyboard=[
+        [KeyboardButton(text="💳 Продолжить")],
+        [KeyboardButton(text="🤔 Пока подумаю")],
+    ],
+    resize_keyboard=True
+)
+
 def payment_inline_discount(payment_url_discount: str) -> InlineKeyboardMarkup:
     if not payment_url_discount:
         return InlineKeyboardMarkup(
@@ -1115,6 +1185,55 @@ def inactivity_ping(trainer_key: str) -> str:
         "skinny": "Ты пропал. Возвращаемся. 60 секунд.",
         "beck": "Перерыв зафиксирован. Возврат сейчас снизит откат.",
     }.get(trainer_key, "Пора вернуться.")
+
+def build_week_plan(user: dict) -> str:
+    """План на неделю (показывается перед оплатой)"""
+    return (
+        "Я собрал тебе план на ближайшую неделю:\n\n"
+        "День 1–2:\n"
+        "→ учимся входить в задачу без перегруза\n\n"
+        "День 3–4:\n"
+        "→ уменьшаем зависание и отвлечение\n\n"
+        "День 5–6:\n"
+        "→ закрепляем возврат без самокритики\n\n"
+        "День 7:\n"
+        "→ собираем устойчивый режим\n\n"
+        "👉 Это не теория.\n"
+        "Это конкретные действия каждый день.\n\n"
+        "И это только начало."
+    )
+
+def build_payment_offer(user: dict) -> str:
+    """Предложение оплаты (фреймирование как продолжение, а не покупка)"""
+    return (
+        "Смотри, где ты сейчас:\n\n"
+        "— мы уже разобрали, где ты застреваешь\n"
+        "— ты уже сделал(а) первые шаги\n"
+        "— ты не с нуля\n\n"
+        "Дальше есть два варианта:\n\n"
+        "1) оставить как есть\n"
+        "→ и через пару дней всё вернётся как было\n\n"
+        "2) продолжить системно\n"
+        "→ и закрепить результат\n\n"
+        "👉 Внутри программы:\n"
+        "— понятный план на 10–12 недель\n"
+        "— ежедневные микро-тренировки\n"
+        "— адаптация под тебя\n\n"
+        "Это не мотивация.\n"
+        "Это система, которая доводит до результата.\n\n"
+        "Хочешь продолжить?"
+    )
+
+def build_hesitation_response() -> str:
+    """Ответ на сомнение 'пока подумаю' (закрыватель лазейки)"""
+    return (
+        "Ок.\n\n"
+        "Скажу честно:\n"
+        "чаще всего люди не продолжают не потому что не надо,\n"
+        "а потому что откладывают.\n\n"
+        "Если тебе откликнулось — лучше продолжить сейчас,\n"
+        "пока ты в процессе."
+    )
 
 DAILY_LIVE_LINES = {
     "marsha": [
@@ -1416,6 +1535,127 @@ def gamify_status_line(u: dict) -> str:
     lvl = int(u.get("level") or 1)
     streak = int(u.get("streak") or 0)
     return f"🏅 Очки: {pts} | Уровень: {lvl} | Стрик: {streak}"
+
+
+# ============================================================
+# DAY 2 PERSONAL PLAN
+# ============================================================
+
+def day2_personal_plan_text(name: str, trainer_key: str, bucket: str, target: str = "") -> str:
+    """Персональный план на день 2 — показываем, что поняли человека"""
+    target = (target or "одной рабочей задачи").strip()
+
+    if trainer_key == "skinny":
+        return (
+            f"{name}, вот твой план на сегодня.\n\n"
+            "Что у тебя ломается:\n"
+            "— вход в задачу слишком тяжёлый\n"
+            "— мозг ждёт идеального начала\n"
+            "— потом всё уходит в откладывание\n\n"
+            "Что делаем сегодня:\n"
+            "1. Не берём всю задачу\n"
+            "2. Заходим в неё на 5–10 минут\n"
+            "3. Останавливаемся раньше, чем устанешь\n\n"
+            f"На чём проверяем:\n{target}\n\n"
+            "Задача дня — не сделать идеально.\n"
+            "Задача дня — начать без цирка."
+        )
+
+    if trainer_key == "beck":
+        return (
+            f"{name}, на сегодня у нас короткий рабочий план.\n\n"
+            "Что видно по твоему паттерну:\n"
+            "— на старте включается давление\n"
+            "— из-за этого вход в задачу становится слишком дорогим\n"
+            "— дальше система выбирает избегание\n\n"
+            "Что делаем сегодня:\n"
+            "1. Сужаем задачу до маленького фрагмента\n"
+            "2. Заходим в неё на ограниченное время\n"
+            "3. Смотрим, где появляется сопротивление\n\n"
+            f"На чём проверяем:\n{target}\n\n"
+            "Сегодня нам нужен не идеальный результат,\n"
+            "а данные: как именно у тебя запускается работа."
+        )
+
+    return (
+        f"{name}, давай на сегодня очень простой личный план.\n\n"
+        "Что у тебя сейчас происходит:\n"
+        "— задача кажется слишком тяжёлой\n"
+        "— внутри много давления\n"
+        "— поэтому вход всё время откладывается\n\n"
+        "Что делаем сегодня:\n"
+        "1. Не пытаемся сделать всё\n"
+        "2. Берём очень маленький кусочек\n"
+        "3. Делаем его спокойно и коротко\n\n"
+        f"На чём проверяем:\n{target}\n\n"
+        "Сегодня важно не победить всё сразу.\n"
+        "Важно — войти в задачу по-другому."
+    )
+
+
+# ============================================================
+# ANTI-CHURN TEXTS (days 1-3)
+# ============================================================
+
+ANTI_CHURN_DAY_TEXTS = {
+    1: {
+        "marsha": (
+            "Первый день почти никогда не идёт идеально.\n\n"
+            "И нам это не нужно.\n"
+            "Нужен один реальный вход.\n\n"
+            "Даже если ты сделал(а) совсем чуть-чуть — это уже начало."
+        ),
+        "skinny": (
+            "Первый день не про результат.\n"
+            "Первый день про вход.\n\n"
+            "Один шаг = день не слит."
+        ),
+        "beck": (
+            "Первый день нужен не для победы.\n"
+            "Он нужен, чтобы система получила первый повтор.\n\n"
+            "Даже короткий вход уже полезен."
+        ),
+    },
+    2: {
+        "marsha": (
+            "Второй день часто сложнее первого.\n"
+            "Потому что новизна уже ушла.\n\n"
+            "Поэтому сегодня нам особенно важен очень маленький и бережный шаг."
+        ),
+        "skinny": (
+            "Второй день — место, где обычно сливаются.\n"
+            "Поэтому сегодня просто делаем минимум и не спорим."
+        ),
+        "beck": (
+            "На второй день снижается эффект новизны.\n"
+            "Именно поэтому сегодня особенно важен короткий повтор."
+        ),
+    },
+    3: {
+        "marsha": (
+            "Третий день важен.\n"
+            "На нём уже становится видно, что тебе подходит, а что нет.\n\n"
+            "Даже если было неровно — это всё ещё полезный день."
+        ),
+        "skinny": (
+            "Третий день — контрольный.\n"
+            "Либо ты снова заходишь,\n"
+            "либо всё откладывается дальше.\n\n"
+            "Сделай короткий вход."
+        ),
+        "beck": (
+            "Третий день даёт уже не случайный, а повторяющийся результат.\n"
+            "Это важная точка для настройки системы."
+        ),
+    },
+}
+
+
+def anti_churn_day_text(day: int, trainer_key: str) -> str:
+    """Возвращает текст анти-слива для дня 1-3"""
+    trainer_key = trainer_key if trainer_key in ("marsha", "skinny", "beck") else "marsha"
+    return ANTI_CHURN_DAY_TEXTS.get(day, {}).get(trainer_key, "")
+
 
 # ============================================================
 # AI SYSTEM PROMPTS

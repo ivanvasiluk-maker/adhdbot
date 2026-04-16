@@ -33,7 +33,7 @@ from texts import (
     TEST_QUESTIONS, ONBOARDING_SCREENS,
     trainer_say, trainer_confirm_text, kb_trainers, kb_input_mode, kb_yes_no,
     kb_training_main, kb_crisis_mode, kb_analysis_confirm, kb_analysis_contract,
-    kb_analysis_map, kb_pay_choice, kb_morning_checkin,
+    kb_analysis_map, kb_pay_choice, kb_payment_continue, kb_morning_checkin,
     kb_doubt_response, kb_more_clarify, payment_inline_discount, payment_inline_full,
     CRISIS_LIMIT, resolve_bucket_from_test, create_test_question_keyboard,
     analysis_contract_short, contract_full_text, month_map_text, guarantee_block, offer_day_3_text,
@@ -42,6 +42,8 @@ from texts import (
     reactivation_6h, reactivation_24h, reactivation_3d, reactivation_7d, kb_reactivation,
     reactivation_soft_return, kb_soft_return,
     kb_mode_choice, MODE_CHOICE_TEXT,
+    emotional_hook, get_daytime_greeting,
+    build_week_plan, build_payment_offer, build_hesitation_response,
 )
 from dialog_engine import (
     detect_dialog_pattern,
@@ -104,6 +106,27 @@ log.info(f"APP_VERSION: {APP_VERSION}")
 log.info(f"TEST_MODE: {TEST_MODE}")
 log.info(f"ENABLE_PAYMENTS: {ENABLE_PAYMENTS}")
 
+
+def log_payment_startup_status() -> None:
+    reasons = []
+    if not ENABLE_PAYMENTS:
+        reasons.append("ENABLE_PAYMENTS is false")
+    if TEST_MODE:
+        reasons.append("TEST_MODE is true")
+    if not PAYMENT_URL_DISCOUNT:
+        reasons.append("PAYMENT_URL_DISCOUNT is empty")
+    if not PAYMENT_URL_FULL:
+        reasons.append("PAYMENT_URL_FULL is empty")
+
+    if reasons:
+        log.warning("Payments startup status: DISABLED or PARTIAL")
+        log.warning("Payments details: %s", "; ".join(reasons))
+    else:
+        log.info("Payments startup status: READY")
+
+
+log_payment_startup_status()
+
 client = None
 AI_ANALYSIS_ENABLED = False
 
@@ -128,6 +151,62 @@ print(f"OPENAI_WHISPER_MODEL: {OPENAI_WHISPER_MODEL}")
 
 def payments_enabled() -> bool:
     return ENABLE_PAYMENTS and not TEST_MODE
+
+
+def get_starts_progress(u: Dict[str, Any]) -> int:
+    metrics = u.get("metrics")
+    if not isinstance(metrics, dict):
+        return 0
+
+    try:
+        return int(metrics.get("starts") or 0)
+    except (TypeError, ValueError):
+        return 0
+
+
+def increment_starts_progress(u: Dict[str, Any]) -> int:
+    metrics = u.get("metrics")
+    if not isinstance(metrics, dict):
+        metrics = {}
+
+    current = get_starts_progress(u) + 1
+    metrics["starts"] = current
+    u["metrics"] = metrics
+    return current
+
+
+def build_wow_analysis(user_text: str) -> str:
+    text = user_text.lower()
+
+    if "не могу начать" in text or "отклады" in text:
+        return (
+            "Смотри, что у тебя происходит:\n\n"
+            "Ты смотришь на задачу → внутри включается давление 'надо нормально сделать' →\n"
+            "из-за этого вход становится тяжёлым → ты откладываешь →\n"
+            "потом делаешь в спешке → потом неприятно.\n\n"
+            "Это не лень.\n"
+            "Это перегруз на входе.\n\n"
+            "👉 Значит мы не будем 'делать задачу'.\n"
+            "Мы будем тренировать вход в неё."
+        )
+
+    if "тревога" in text or "пережива" in text:
+        return (
+            "Смотри, что происходит:\n\n"
+            "Появляется мысль → тело напрягается → мозг начинает прокручивать →\n"
+            "ты пытаешься решить всё сразу → становится только хуже.\n\n"
+            "Это не 'слабость'.\n"
+            "Это цикл тревоги.\n\n"
+            "👉 Значит мы будем тренировать не 'решить',\n"
+            "а прерывать этот цикл."
+        )
+
+    return (
+        "Я вижу общий паттерн:\n"
+        "ты не ленишься — ты застреваешь в моменте входа или перегруза.\n\n"
+        "👉 Значит мы будем работать не с силой воли,\n"
+        "а с точкой, где тебя выбивает."
+    )
 
 
 async def ai_micro_reflect(user_text: str, trainer_key: str, client=None, model: str = "gpt-4o-mini") -> str:
@@ -171,6 +250,25 @@ async def ai_micro_reflect(user_text: str, trainer_key: str, client=None, model:
     except Exception as e:
         log.error(f"ai_micro_reflect failed: {e}")
     return fallback.get(trainer_key, fallback["marsha"])
+
+
+async def ai_fallback_answer(user_text: str) -> Optional[str]:
+    try:
+        from openai import AsyncOpenAI
+
+        client = AsyncOpenAI()
+        resp = await client.chat.completions.create(
+            model="gpt-4o-mini",
+            messages=[
+                {"role": "system", "content": "Ты тренер навыков саморегуляции. Давай коротко, по делу."},
+                {"role": "user", "content": user_text},
+            ],
+            temperature=0.7,
+            max_tokens=120,
+        )
+        return (resp.choices[0].message.content or "").strip() or None
+    except Exception:
+        return None
 
 
 async def sync_user_summary_state(u: Dict[str, Any], last_event: Optional[str] = None):
@@ -348,15 +446,20 @@ async def main_flow(m: Message):
     }
 
     if u.get("stage") not in KNOWN_STAGES:
+        # если уже есть день -> возвращаем в тренировку
+        if u.get("day"):
+            u["stage"] = "training"
+            await save_user(u, DB_PATH)
+            await m.answer(
+                "Состояние сбилось. Возвращаю тебя в текущий день.",
+                reply_markup=kb_training_main,
+            )
+            return
+
+        # если совсем пусто -> старт
         u["stage"] = "ask_name"
         await save_user(u, DB_PATH)
-        await m.answer(
-            "Похоже, состояние сбилось. Давай спокойно начнём заново.",
-            reply_markup=ReplyKeyboardMarkup(
-                keyboard=[[KeyboardButton(text="/start")]],
-                resize_keyboard=True,
-            ),
-        )
+        await m.answer("Давай начнём заново 👇")
         return
 
     profile_changed = False
@@ -524,6 +627,17 @@ async def main_flow(m: Message):
     }
 
     if u.get("stage") in dialog_stages and text:
+        matched_intent = False
+
+        if "скуч" in low:
+            await m.answer(
+                trainer_say(
+                    u.get("trainer_key") or "marsha",
+                    "Скука = ты уже у входа.\n\n👉 Сделай 1 тупое действие и остановись.",
+                )
+            )
+            return
+
         pattern = detect_dialog_pattern(text)
 
         if u.get("stage") in {"await_problem_text", "analysis_refine"} and need_clarify(text):
@@ -538,10 +652,17 @@ async def main_flow(m: Message):
             )
             if reply:
                 await m.answer(trainer_say(u.get("trainer_key") or "marsha", reply))
+                matched_intent = True
 
                 if pattern == "misunderstood":
                     await m.answer(MISUNDERSTOOD_FALLBACK)
                     return
+
+        if not matched_intent:
+            ai = await ai_fallback_answer(text)
+            if ai:
+                await m.answer(ai)
+                return
 
     # ask_name
     if u["stage"] == "ask_name":
@@ -704,7 +825,10 @@ async def main_flow(m: Message):
         u["stage"] = "run_analysis"
         await save_user(u, DB_PATH)
 
-        await m.answer("Ок. Быстрый разбор…")
+        wow = build_wow_analysis(user_text)
+        trainer_key = u.get("trainer_key") or "marsha"
+        await m.answer(trainer_say(trainer_key, wow))
+        await m.answer("Ок. Детальный разбор…")
         await run_analysis(m, u, user_text, DB_PATH, SHEETS_WEBHOOK_URL, client, OPENAI_CHAT_MODEL)
         return
 
@@ -727,7 +851,10 @@ async def main_flow(m: Message):
         u["analysis_json"] = json.dumps({"user_text": clamp_str(t, 1000)}, ensure_ascii=False)
         u["stage"] = "run_analysis"
         await save_user(u, DB_PATH)
-        await m.answer("Ок. Быстрый разбор…")
+        wow = build_wow_analysis(t)
+        trainer_key = u.get("trainer_key") or "marsha"
+        await m.answer(trainer_say(trainer_key, wow))
+        await m.answer("Ок. Детальный разбор…")
         await run_analysis(m, u, t, DB_PATH, SHEETS_WEBHOOK_URL, client, OPENAI_CHAT_MODEL)
         return
 
@@ -1071,6 +1198,7 @@ async def main_flow(m: Message):
         if text == "✅ Сделал(а)" or "сделал" in low:
             u["done_count"] = int(u.get("done_count") or 0) + 1
             gamify_apply(u, 2, "done")
+            progress = increment_starts_progress(u)
             trainer = u.get("trainer_key")
             # 1️⃣ Базовая реакция
             if trainer == "skinny":
@@ -1086,16 +1214,20 @@ async def main_flow(m: Message):
             u["stage"] = "waiting_next_day"
             await track_user_event(u, "training", "done", {"day": day})
             await m.answer(trainer_say(u.get("trainer_key") or "marsha", guidance_micro_phrase("progress")))
+            await m.answer(trainer_say(u.get("trainer_key") or "marsha", emotional_hook(day, progress)))
             await m.answer("Завтра будет чуть легче, чем сегодня.")
+            await save_user(u, DB_PATH)
             return
 
         if text == "↩️ Вернулся(лась)" or "вернулся" in low:
             u["return_count"] = int(u.get("return_count") or 0) + 1
             gamify_apply(u, 1, "return")
+            progress = increment_starts_progress(u)
             await track_user_event(u, "training", "return", {"day": day})
 
             await m.answer(trainer_say(u.get("trainer_key") or "marsha", "Возврат засчитан. Это ключевой навык."))
             await m.answer(trainer_say(u.get("trainer_key") or "marsha", guidance_micro_phrase("reason")))
+            await m.answer(trainer_say(u.get("trainer_key") or "marsha", emotional_hook(day, progress)))
 
             u["stage"] = "after_return_choice"
             await save_user(u, DB_PATH)
@@ -1148,6 +1280,7 @@ async def main_flow(m: Message):
             await save_user(u, DB_PATH)
 
             skill_msg = format_skill(new_sid, u.get("trainer_key") or "marsha") if new_sid in SKILLS_DB else "Выбран новый навык."
+            await m.answer(trainer_say(u.get("trainer_key") or "marsha", "Ты не откатился.\nТы всё ещё в процессе."))
             await m.answer(trainer_say(u.get("trainer_key") or "marsha", f"Меняю на {SKILLS_DB[new_sid]['name']}" if new_sid in SKILLS_DB else "Меняю навык."))
             await m.answer(skill_msg, reply_markup=kb_training_main)
             return
@@ -1218,11 +1351,19 @@ async def main_flow(m: Message):
                 await send_weekly_summary(m, u, DB_PATH)
 
             if payments_enabled() and day == 3 and u.get("trial_phase") == "trial3":
+                # PATCH 2: Show weekly plan
+                await m.answer(build_week_plan(u))
+                
+                # PATCH 2: Context message (pause)
                 await m.answer(
-                    "Ты уже видел(а):\nэто не мотивация.\nЭто тренировка.\n\n💳 Сейчас — цена со скидкой.",
-                    reply_markup=kb_pay_choice,
+                    "Это не теория.\n"
+                    "Это конкретные действия каждый день.\n\n"
+                    "И это только начало."
                 )
-                u["stage"] = "offer"
+                
+                # PATCH 1: Show payment offer with new framing
+                await m.answer(build_payment_offer(u), reply_markup=kb_payment_continue)
+                u["stage"] = "offer_day3"
                 await track_user_event(u, "offer", "offer_shown", {"variant": "discount_day3"})
                 return
 
@@ -1338,6 +1479,32 @@ async def main_flow(m: Message):
             await m.answer("Ок. План не меняю. Возвращаемся.", reply_markup=kb_training_main)
             return
         await m.answer("Выбери: ✅ Да / ❌ Нет", reply_markup=kb_yes_no)
+        return
+
+    # OFFER_DAY3 stage (new payment moment with continue/think buttons)
+    if u.get("stage") == "offer_day3":
+        if not payments_enabled():
+            u["stage"] = "training"
+            await track_user_event(u, "payment", "payment_bypassed", {"reason": "payments_disabled"})
+            await m.answer("Сейчас идёт тестовый запуск. Продолжаем без оплаты.", reply_markup=kb_training_main)
+            return
+
+        low = text.lower().strip()
+
+        if text == "💳 Продолжить" or "продолж" in low:
+            await track_user_event(u, "payment", "continue_clicked", {"variant": "discount_day3"})
+            u["stage"] = "offer"
+            await m.answer("Ок. Выбирай вариант оплаты:", reply_markup=kb_pay_choice)
+            return
+
+        if text == "🤔 Пока подумаю" or "подумаю" in low or "думаю" in low:
+            await track_user_event(u, "payment", "offer_hesitation", {})
+            await m.answer(build_hesitation_response())
+            await asyncio.sleep(1)
+            await m.answer(build_payment_offer(u), reply_markup=kb_payment_continue)
+            return
+
+        await m.answer("Выбери кнопкой 👇", reply_markup=kb_payment_continue)
         return
 
     # OFFER stage
