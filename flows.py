@@ -17,6 +17,8 @@ from texts import (
     trainer_say, skill_explain, PRAISE, DAILY_LIVE_LINES,
     day_task_text, midday_ping, TRAINER_INTRO_TEXT,
     kb_yes_no, kb_training_main, kb_crisis_mode,
+    kb_skill_entry,
+    morning_checkin_text, midday_checkin_text, evening_checkin_text, evening_close_reply,
     CRISIS_LIMIT, kb_morning_checkin, get_morning_checkin_opener,
     emotional_hook, get_daytime_greeting,
 )
@@ -261,7 +263,24 @@ async def start_day1(m: Message, u: Dict[str, Any], db_path: str):
         f"✅ Как: {skill_explain(trainer_key, skill)}\n\n"
         "Вечером спросим: сделал(а)? вернулся(лась)?"
     )
-    await m.answer(trainer_say(trainer_key, msg), reply_markup=kb_training_main)
+    
+    u["current_skill_id"] = sid
+    u["pending_skill_id"] = sid
+    u["pending_skill_day"] = 1
+    u["has_started_training"] = 1
+    u["day_started_at"] = time.time()
+    await save_user(u, db_path)
+    
+    # Show day intro
+    await m.answer(trainer_say(trainer_key, msg))
+    
+    # Then ask morning check-in
+    u["stage"] = "morning_checkin"
+    await save_user(u, db_path)
+    
+    await m.answer(
+        trainer_say(trainer_key, morning_checkin_text(trainer_key, name))
+    )
 
 async def start_day_simple(m: Message, u: Dict[str, Any], day: int, db_path: str):
     """Универсальный скрипт для любого дня"""
@@ -285,22 +304,24 @@ async def start_day_simple(m: Message, u: Dict[str, Any], day: int, db_path: str
         f"✅ Как: {skill_explain(trainer_key, skill)}\n\n"
         "Считается попытка 60–120 сек."
     )
-    await m.answer(trainer_say(trainer_key, msg), reply_markup=kb_training_main)
-
-    trainer_key = u.get("trainer_key") or "marsha"
-
+    
     u["day"] = day
-    u["stage"] = "morning_checkin"
+    u["current_skill_id"] = sid
     u["pending_skill_id"] = sid
     u["pending_skill_day"] = day
     u["has_started_training"] = 1
     u["day_started_at"] = time.time()
     await save_user(u, db_path)
-
-    opener = get_morning_checkin_opener(trainer_key)
+    
+    # Show day intro
+    await m.answer(trainer_say(trainer_key, msg))
+    
+    # Then ask morning check-in
+    u["stage"] = "morning_checkin"
+    await save_user(u, db_path)
+    
     await m.answer(
-        trainer_say(trainer_key, f"{opener}\n\nЧто у тебя сегодня на уме?"),
-        reply_markup=kb_morning_checkin,
+        trainer_say(trainer_key, morning_checkin_text(trainer_key, name))
     )
 
 async def advance_day(m: Message, u: Dict[str, Any], next_day: int, db_path: str):
