@@ -5,29 +5,22 @@
 import json
 import time
 import asyncio
-import random
 import logging
-import os
-from typing import Dict, Any, Optional, List
+from typing import Dict, Any, Optional
 import aiosqlite
-from aiogram.types import Message, FSInputFile, KeyboardButton, ReplyKeyboardMarkup
-from aiogram import Bot
+from aiogram.types import Message
 
 from texts import (
-    trainer_say, skill_explain, PRAISE, DAILY_LIVE_LINES,
-    day_task_text, midday_ping, TRAINER_INTRO_TEXT,
-    kb_yes_no, kb_training_main, kb_crisis_mode,
-    kb_skill_entry,
-    morning_checkin_text, midday_checkin_text, evening_checkin_text, evening_close_reply,
+    trainer_say, skill_explain,
+    kb_yes_no, kb_training_run,
+    morning_checkin_text,
     CRISIS_LIMIT, kb_morning_checkin, get_morning_checkin_opener,
     emotional_hook, get_daytime_greeting,
 )
 from skills import SKILLS_DB, get_current_plan, build_28_day_plan, build_plan
 from db import (
-    get_user,
     save_user,
     log_event,
-    USER_FIELDS,
     is_paid,
     push_user_summary,
     compute_stuck_flag,
@@ -413,7 +406,7 @@ async def handle_crisis(m: Message, u: dict, user_text: str, db_path: str, sheet
 
     u["stage"] = "training"
     await save_user(u, db_path)
-    await m.answer("Возвращаемся в тренировку 👇", reply_markup=kb_training_main)
+    await m.answer("Возвращаемся в тренировку 👇", reply_markup=kb_training_run)
 
 # ============================================================
 # AI CRISIS HELP
