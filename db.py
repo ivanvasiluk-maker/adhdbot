@@ -6,11 +6,49 @@ import json
 import time
 import logging
 import os
+import asyncio
 from typing import Dict, Any, Optional, List
 import aiosqlite
 
 # Logging
 log = logging.getLogger("bot")
+
+DB_REUSE_CONNECTION = os.getenv("DB_REUSE_CONNECTION", "").lower() in {"1", "true", "yes", "on"}
+_shared_db_conn: Optional[aiosqlite.Connection] = None
+_shared_db_lock = asyncio.Lock()
+_shared_db_exec_lock = asyncio.Lock()
+
+
+def _post_json_webhook(url: str, payload: bytes, timeout: int = 3) -> None:
+    import urllib.request
+
+    req = urllib.request.Request(
+        url,
+        data=payload,
+        headers={"Content-Type": "application/json"},
+        method="POST",
+    )
+    urllib.request.urlopen(req, timeout=timeout).read()
+
+
+async def get_db_connection(db_path: str) -> aiosqlite.Connection:
+    """Return a DB connection; optionally reuse one shared connection via feature flag."""
+    if not DB_REUSE_CONNECTION:
+        return await aiosqlite.connect(db_path)
+
+    global _shared_db_conn
+    async with _shared_db_lock:
+        if _shared_db_conn is None:
+            _shared_db_conn = await aiosqlite.connect(db_path)
+        return _shared_db_conn
+
+
+async def close_shared_db_connection() -> None:
+    global _shared_db_conn
+    async with _shared_db_lock:
+        if _shared_db_conn is not None:
+            await _shared_db_conn.close()
+            _shared_db_conn = None
 
 # Global test switch to unlock features without paywalls
 TEST_MODE = os.getenv("TEST_MODE", "").lower() in {"1", "true", "yes", "on", "debug"}
@@ -181,26 +219,39 @@ async def get_user(uid: int, db_path: str) -> Dict[str, Any]:
 
 async def save_user(u: Dict[str, Any], db_path: str):
     """Сохранить пользователя в БД"""
+    cols, vals = _serialize_user_row(u)
+    placeholders = ",".join(["?"] * len(cols))
+    cols_sql = ",".join(cols)
+
+    if DB_REUSE_CONNECTION:
+        db = await get_db_connection(db_path)
+        async with _shared_db_exec_lock:
+            await db.execute(
+                f"INSERT OR REPLACE INTO users ({cols_sql}) VALUES ({placeholders})",
+                tuple(vals),
+            )
+            await db.commit()
+    else:
+        async with aiosqlite.connect(db_path) as db:
+            await db.execute(
+                f"INSERT OR REPLACE INTO users ({cols_sql}) VALUES ({placeholders})",
+                tuple(vals),
+            )
+            await db.commit()
+
+
+def _serialize_user_row(u: Dict[str, Any]):
     cols = USER_FIELDS
     vals = []
     for c in cols:
         v = u.get(c)
-        # Serialize lists/dicts to JSON for storage
         if isinstance(v, (list, dict)):
             try:
                 v = json.dumps(v, ensure_ascii=False)
             except Exception:
                 v = None
         vals.append(v)
-    placeholders = ",".join(["?"] * len(cols))
-    cols_sql = ",".join(cols)
-
-    async with aiosqlite.connect(db_path) as db:
-        await db.execute(
-            f"INSERT OR REPLACE INTO users ({cols_sql}) VALUES ({placeholders})",
-            tuple(vals),
-        )
-        await db.commit()
+    return cols, vals
 
 # ============================================================
 # DB MIGRATION + EVENTS (аналитика) + GAMIFY FIELDS
@@ -288,8 +339,6 @@ async def push_user_summary(u: dict, sheets_webhook_url: str = ""):
         return
 
     try:
-        import urllib.request
-
         payload = json.dumps({
             "kind": "user_summary",
             "updated_at": time.strftime("%Y-%m-%d %H:%M:%S"),
@@ -319,14 +368,7 @@ async def push_user_summary(u: dict, sheets_webhook_url: str = ""):
             "is_paid": 1 if u.get("trial_phase") == "paid" else 0,
             "stuck_flag": u.get("stuck_flag", ""),
         }, ensure_ascii=False).encode("utf-8")
-
-        req = urllib.request.Request(
-            sheets_webhook_url,
-            data=payload,
-            headers={"Content-Type": "application/json"},
-            method="POST",
-        )
-        urllib.request.urlopen(req, timeout=3).read()
+        await asyncio.to_thread(_post_json_webhook, sheets_webhook_url, payload, 3)
     except Exception as e:
         log.exception(f"SHEETS ERROR in push_user_summary: {e}")
 
@@ -353,8 +395,6 @@ async def log_event(
 
     if sheets_webhook_url:
         try:
-            import urllib.request
-
             snap = user_snapshot or {}
             payload = json.dumps({
                 "kind": "event",
@@ -374,16 +414,79 @@ async def log_event(
                 "today_target": snap.get("today_target"),
                 "meta": meta,
             }, ensure_ascii=False).encode("utf-8")
-
-            req = urllib.request.Request(
-                sheets_webhook_url,
-                data=payload,
-                headers={"Content-Type": "application/json"},
-                method="POST",
-            )
-            urllib.request.urlopen(req, timeout=3).read()
+            await asyncio.to_thread(_post_json_webhook, sheets_webhook_url, payload, 3)
         except Exception as e:
             log.exception(f"SHEETS ERROR in log_event: {e}")
+
+
+async def save_user_and_log_event(
+    u: Dict[str, Any],
+    stage: str,
+    event: str,
+    meta: dict = None,
+    db_path: str = "bot.db",
+    sheets_webhook_url: str = "",
+    push_summary: bool = True,
+):
+    """Save user row and event in one DB transaction, then optionally push webhooks."""
+    meta = meta or {}
+    meta_s = json.dumps(meta, ensure_ascii=False)
+    ts = time.time()
+
+    cols, vals = _serialize_user_row(u)
+    placeholders = ",".join(["?"] * len(cols))
+    cols_sql = ",".join(cols)
+
+    if DB_REUSE_CONNECTION:
+        db = await get_db_connection(db_path)
+        async with _shared_db_exec_lock:
+            await db.execute(
+                f"INSERT OR REPLACE INTO users ({cols_sql}) VALUES ({placeholders})",
+                tuple(vals),
+            )
+            await db.execute(
+                "INSERT INTO events(ts,user_id,stage,event,meta) VALUES(?,?,?,?,?)",
+                (ts, u.get("user_id"), stage, event, meta_s),
+            )
+            await db.commit()
+    else:
+        async with aiosqlite.connect(db_path) as db:
+            await db.execute(
+                f"INSERT OR REPLACE INTO users ({cols_sql}) VALUES ({placeholders})",
+                tuple(vals),
+            )
+            await db.execute(
+                "INSERT INTO events(ts,user_id,stage,event,meta) VALUES(?,?,?,?,?)",
+                (ts, u.get("user_id"), stage, event, meta_s),
+            )
+            await db.commit()
+
+    if push_summary and sheets_webhook_url:
+        await push_user_summary(u, sheets_webhook_url)
+
+    if sheets_webhook_url:
+        try:
+            payload = json.dumps({
+                "kind": "event",
+                "ts": ts,
+                "user_id": u.get("user_id"),
+                "chat_id": u.get("chat_id"),
+                "username": u.get("username"),
+                "name": u.get("name"),
+                "trainer_key": u.get("trainer_key"),
+                "mode": u.get("mode"),
+                "input_mode": u.get("input_mode"),
+                "stage": stage,
+                "event": event,
+                "day": u.get("day"),
+                "bucket": u.get("bucket"),
+                "trial_phase": u.get("trial_phase"),
+                "today_target": u.get("today_target"),
+                "meta": meta,
+            }, ensure_ascii=False).encode("utf-8")
+            await asyncio.to_thread(_post_json_webhook, sheets_webhook_url, payload, 3)
+        except Exception as e:
+            log.exception(f"SHEETS ERROR in save_user_and_log_event: {e}")
 
 def gamify_apply(u: dict, delta_points: int, reason: str):
     """Применить геймификацию"""

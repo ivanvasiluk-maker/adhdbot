@@ -6,15 +6,18 @@ import json
 import time
 import asyncio
 import logging
+from datetime import datetime
 from typing import Dict, Any, Optional
 import aiosqlite
 from aiogram.types import Message
 
 from texts import (
     trainer_say, skill_explain,
-    kb_yes_no, kb_training_run,
+    kb_yes_no, kb_training_run, kb_skill_entry,
+    skill_card_text,
     morning_checkin_text,
     CRISIS_LIMIT, kb_morning_checkin, get_morning_checkin_opener,
+    morning_greeting_text,
     emotional_hook, get_daytime_greeting,
 )
 from skills import SKILLS_DB, get_current_plan, build_28_day_plan, build_plan
@@ -40,6 +43,12 @@ def clamp_str(s: str, n: int = 1400) -> str:
     return s[: n - 3] + "..."
 
 
+async def _maybe_await(result):
+    if asyncio.iscoroutine(result):
+        return await result
+    return result
+
+
 async def sync_user_summary_state(u: Dict[str, Any], db_path: str, sheets_webhook: str = "", last_event: str = ""):
     if last_event:
         u["last_event"] = last_event
@@ -52,21 +61,22 @@ async def sync_user_summary_state(u: Dict[str, Any], db_path: str, sheets_webhoo
 # TRAINER PHOTO SENDING
 # ============================================================
 
-async def send_trainer_photo_if_any(chat_id: int, trainer_key: str, bot_token: str):
+async def send_trainer_photo_if_any(bot, chat_id: int, trainer_key: str):
     """Send trainer photo if a matching file exists in ./images."""
     import os
     import logging
-    from aiogram import Bot
     from aiogram.types import FSInputFile
     base = os.path.join(os.path.dirname(__file__), "images", trainer_key)
+    if not os.path.isdir(base):
+        logging.warning(f"[PHOTO] No directory for trainer {trainer_key}: {base}")
+        return
+
     for ext in ("jpg", "jpeg", "png", "webp"):  # ищем любой формат
         for fname in os.listdir(base):
             if fname.lower().endswith(ext):
                 path = os.path.join(base, fname)
                 try:
-                    b = Bot(token=bot_token)
-                    await b.send_photo(chat_id, FSInputFile(path))
-                    await b.session.close()
+                    await bot.send_photo(chat_id, FSInputFile(path))
                     logging.info(f"[PHOTO] Sent trainer photo: {path} to chat {chat_id}")
                     return
                 except Exception as e:
@@ -124,9 +134,13 @@ async def start_day(m: Message, u: dict, day: int, db_path: str, sheets_webhook:
     skill = SKILLS_DB[sid]
 
     trainer_key = u.get("trainer_key") or "marsha"
+    current_hour = datetime.now().hour
+    in_morning_window = 8 <= current_hour < 10
+    is_first_training_start = int(u.get("has_started_training") or 0) == 0 and day == 1
 
     u["day"] = day
-    u["stage"] = "morning_checkin"
+    u["stage"] = "day_morning"
+    u["current_skill_id"] = sid
     u["pending_skill_id"] = sid
     u["pending_skill_day"] = day
     u["has_started_training"] = 1
@@ -149,8 +163,8 @@ async def start_day(m: Message, u: dict, day: int, db_path: str, sheets_webhook:
             )
         )
 
-    # Анти-слив текст на дни 1-3
-    if day in {1, 2, 3}:
+    # Анти-слив текст на дни 1-3 (кроме самого первого запуска)
+    if day in {1, 2, 3} and not is_first_training_start:
         from texts import anti_churn_day_text
         anti_text = anti_churn_day_text(day, trainer_key)
         if anti_text:
@@ -161,12 +175,31 @@ async def start_day(m: Message, u: dict, day: int, db_path: str, sheets_webhook:
         starts_progress = int(metrics.get("starts") or 0)
     except (TypeError, ValueError):
         starts_progress = 0
-    await m.answer(
-        trainer_say(
-            trainer_key,
-            f"{get_daytime_greeting()}.\n{emotional_hook(u.get('day') or day, starts_progress)}",
+    if is_first_training_start:
+        greet_name = (u.get("name") or "").strip()
+        base_greet = get_daytime_greeting()
+        if greet_name:
+            await m.answer(
+                trainer_say(trainer_key, f"{base_greet}, {greet_name}."),
+                reply_markup=kb_skill_entry,
+            )
+        else:
+            await m.answer(
+                trainer_say(trainer_key, f"{base_greet}."),
+                reply_markup=kb_skill_entry,
+            )
+
+        # Первый запуск делаем максимально простым: только приветствие.
+        u["last_active"] = time.time()
+        await save_user(u, db_path)
+        return
+    else:
+        await m.answer(
+            trainer_say(
+                trainer_key,
+                f"{get_daytime_greeting()}.\n{emotional_hook(u.get('day') or day, starts_progress)}",
+            )
         )
-    )
 
     # Утренний быстрый чек — только начиная со 2-го дня
     if day > 1:
@@ -175,9 +208,21 @@ async def start_day(m: Message, u: dict, day: int, db_path: str, sheets_webhook:
         energy = u.get("last_energy") or "?"
         await m.answer(f"🕒 Быстрый чек\nСон: {sleep}\nТревога: {anxiety}\nЭнергия: {energy}")
 
-    opener = get_morning_checkin_opener(trainer_key)
-    question = "Что у тебя сегодня на уме?"
-    await m.answer(trainer_say(trainer_key, f"{opener}\n\n{question}"), reply_markup=kb_morning_checkin)
+    if not is_first_training_start:
+        if in_morning_window:
+            morning_text = f"{morning_greeting_text(trainer_key)}\n\nЕсли готов(а) - начинаем."
+        else:
+            morning_text = (
+                f"{get_daytime_greeting()}.\n\n"
+                "Сохраняем ритм спокойно и без давления.\n"
+                "Если готов(а) - начинаем короткий круг."
+            )
+        await m.answer(trainer_say(trainer_key, morning_text))
+
+    await m.answer(
+        trainer_say(trainer_key, skill_card_text(skill, trainer_key=trainer_key)),
+        reply_markup=kb_skill_entry,
+    )
 
     # 2️⃣ +1 балл прогресса
     u["points"] = int(u.get("points") or 0) + 1
@@ -452,11 +497,11 @@ async def ai_crisis_help(trainer_key: str, bucket: str, user_text: str, client=N
     }, ensure_ascii=False)
 
     try:
-        resp = client.chat.completions.create(
+        resp = await _maybe_await(client.chat.completions.create(
             model=model,
             messages=[{"role":"system","content":system},{"role":"user","content":user}],
             temperature=0.25,
-        )
+        ))
         data = _extract_json(resp.choices[0].message.content or "") or {}
     except Exception:
         data = {}
@@ -518,14 +563,14 @@ async def ai_analyze(user_text: str, client=None, model: str = "gpt-4o-mini") ->
 
         from texts import build_ai_system_prompt
         system = build_ai_system_prompt()
-        resp = client.chat.completions.create(
+        resp = await _maybe_await(client.chat.completions.create(
             model=model,
             messages=[
                 {"role": "system", "content": system},
                 {"role": "user", "content": clamp_str(user_text, 1500)},
             ],
             temperature=0.3,
-        )
+        ))
         data = _extract_json(resp.choices[0].message.content or "")
         if not data:
             log.info("[ANALYSIS] ai_analyze finish: fallback(no json)")
@@ -554,38 +599,6 @@ async def ai_analyze(user_text: str, client=None, model: str = "gpt-4o-mini") ->
         log.exception("[ANALYSIS] ai_analyze failed, using fallback")
         return dict(fallback)
 
-    # Мини-ИИ-рефлексия после выполнения
-    async def ai_micro_reflect(user_text: str, trainer_key: str) -> str:
-        """
-        Короткий рефлексивный ответ на опыт выполнения.
-        1–2 предложения максимум.
-        """
-        prompt = f"""
-    Пользователь описал опыт выполнения навыка:
-    \n"{user_text}"\n
-    Ответь:
-    - 1–2 короткими предложениями
-    - Без лекций
-    - Поддерживающе
-    - В стиле тренера: {trainer_key}
-
-    Если есть положительный момент — усили его.
-    Если сомнение — нормализуй.
-    Без длинных объяснений.
-    """
-        try:
-            import openai
-            client = openai.OpenAI()
-            r = await client.chat.completions.create(
-                model="gpt-4o-mini",
-                messages=[{"role": "user", "content": prompt}],
-                temperature=0.6,
-                max_tokens=120
-            )
-            return r.choices[0].message.content.strip()
-        except Exception:
-            return "Это важный шаг. Продолжай."
-
 async def ai_analyze_comprehensive(user_text: str, trainer_key: str = "marsha", client=None, model: str = "gpt-4o-mini") -> dict:
     """Подробный AI анализ"""
     from texts import AI_ANALYSIS_SYSTEM_PROMPT
@@ -609,7 +622,7 @@ async def ai_analyze_comprehensive(user_text: str, trainer_key: str = "marsha", 
             return dict(fallback)
 
         system = AI_ANALYSIS_SYSTEM_PROMPT
-        resp = client.chat.completions.create(
+        resp = await _maybe_await(client.chat.completions.create(
             model=model,
             messages=[
                 {"role": "system", "content": system},
@@ -632,7 +645,7 @@ async def ai_analyze_comprehensive(user_text: str, trainer_key: str = "marsha", 
 {clamp_str(user_text, 1500)}"""},
             ],
             temperature=0.3,
-        )
+        ))
         data = _extract_json(resp.choices[0].message.content or "")
         if not data:
             log.info("[ANALYSIS] ai_analyze_comprehensive finish: fallback(no json)")
@@ -666,6 +679,7 @@ async def run_analysis(m: Message, u: Dict[str, Any], user_text: str, db_path: s
     """Запустить анализ"""
     from texts import kb_analysis_confirm
     log.info("[ANALYSIS] run_analysis start")
+    started_at = time.perf_counter()
     try:
         r = await ai_analyze(user_text, client, model)
         comp = await ai_analyze_comprehensive(user_text, u.get("trainer_key", "marsha"), client, model)
@@ -706,7 +720,8 @@ async def run_analysis(m: Message, u: Dict[str, Any], user_text: str, db_path: s
         )
 
         await m.answer(short_review, reply_markup=kb_analysis_confirm)
-        log.info(f"[ANALYSIS] run_analysis finish: success, bucket={bucket}")
+        elapsed_ms = (time.perf_counter() - started_at) * 1000
+        log.info(f"[ANALYSIS] run_analysis finish: success, bucket={bucket}, elapsed_ms={elapsed_ms:.1f}")
     except Exception:
         log.exception("[ANALYSIS] run_analysis failed")
         try:
@@ -733,6 +748,9 @@ async def run_analysis(m: Message, u: Dict[str, Any], user_text: str, db_path: s
                 )
             except Exception:
                 log.exception("[ANALYSIS] run_analysis could not send forced confirm_analysis message")
+        finally:
+            elapsed_ms = (time.perf_counter() - started_at) * 1000
+            log.info(f"[ANALYSIS] run_analysis finish: fallback, elapsed_ms={elapsed_ms:.1f}")
 
 # ============================================================
 # PROGRESS & REPORTS

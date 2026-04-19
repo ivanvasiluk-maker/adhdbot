@@ -197,15 +197,6 @@ TRAINER_BUTTONS = {
     "beck": "🧠 Бек — объясняю",
 }
 
-MODE_CHOICE_TEXT = (
-    "Ещё один выбор перед стартом.\n\n"
-    "Как тебе сейчас лучше заходить в работу?\n\n"
-    "🌱 Бережно - если много давления, тревоги или усталости\n"
-    "⚙️ Стандартно - если нужен обычный рабочий ритм\n"
-    "🔥 Собранно - если хочешь прямее и жёстче\n\n"
-    "Это не навсегда. Потом можно поменять."
-)
-
 # ============================================================
 # 🐈 TRAINER PRESENTATION BLOCK
 # ============================================================
@@ -437,8 +428,34 @@ def skill_card_text(skill: dict, trainer_key: str = "marsha") -> str:
 
 
 def skill_training_text(skill: dict, trainer_key: str = "marsha") -> str:
-    """Текст на экране активной тренировки текущего навыка."""
-    return skill_detail_text(skill)
+    """Единый рендер навыка: цель, 3 шага, минимум, why и стиль тренера."""
+    coach_map = {
+        "skinny": skill.get("coach_skinny"),
+        "marsha": skill.get("coach_marsha"),
+        "beck": skill.get("coach_beck"),
+    }
+
+    coach_line = coach_map.get(trainer_key) or skill.get("coach_marsha") or ""
+
+    parts = [
+        f"🧩 {skill.get('name', 'Навык')}",
+        f"🎯 Зачем: {skill.get('goal', '')}",
+        "",
+        "Делай так:",
+        f"1. {skill.get('step1', '')}",
+        f"2. {skill.get('step2', '')}",
+        f"3. {skill.get('step3', '')}",
+        "",
+        f"⚡ Минимум: {skill.get('minimum', '')}",
+        "",
+        f"🧠 Почему помогает: {skill.get('why_short', '')}",
+    ]
+
+    if coach_line:
+        parts.append("")
+        parts.append(coach_line)
+
+    return "\n".join([p for p in parts if p is not None])
 
 # ============================================================
 # 3) KEYBOARDS
@@ -462,11 +479,29 @@ kb_trainers = ReplyKeyboardMarkup(
     resize_keyboard=True,
 )
 
-kb_mode_choice = ReplyKeyboardMarkup(
+kb_diag_start_hold = ReplyKeyboardMarkup(
     keyboard=[
-        [KeyboardButton(text="🌱 Бережно")],
-        [KeyboardButton(text="⚙️ Стандартно")],
-        [KeyboardButton(text="🔥 Собранно")],
+        [KeyboardButton(text="🚪 Трудно начать")],
+        [KeyboardButton(text="🔁 Трудно удержаться")],
+        [KeyboardButton(text="✍️ Написать своими словами")],
+    ],
+    resize_keyboard=True,
+)
+
+kb_diag_emotional = ReplyKeyboardMarkup(
+    keyboard=[
+        [KeyboardButton(text="😰 Больше тревоги")],
+        [KeyboardButton(text="🕳 Больше пустоты/усталости")],
+        [KeyboardButton(text="✍️ Написать своими словами")],
+    ],
+    resize_keyboard=True,
+)
+
+kb_diag_distraction = ReplyKeyboardMarkup(
+    keyboard=[
+        [KeyboardButton(text="📱 Отвлечения - главная причина")],
+        [KeyboardButton(text="🧩 Отвлечения - вторично")],
+        [KeyboardButton(text="✍️ Написать своими словами")],
     ],
     resize_keyboard=True,
 )
@@ -493,25 +528,42 @@ kb_yes_no = ReplyKeyboardMarkup(
     resize_keyboard=True
 )
 
-kb_morning_checkin = ReplyKeyboardMarkup(
+kb_morning_state = ReplyKeyboardMarkup(
     keyboard=[
-        [KeyboardButton(text="тревожно"), KeyboardButton(text="не хочу начинать")],
-        [KeyboardButton(text="пусто / нет сил"), KeyboardButton(text="отвлекаюсь")],
-        [KeyboardButton(text="нормально, идём")],
-        [KeyboardButton(text="напишу сам")],
+        [KeyboardButton(text="🙂 Есть силы")],
+        [KeyboardButton(text="😵 Тяжело")],
+        [KeyboardButton(text="🕳 Пусто")],
+        [KeyboardButton(text="😰 Тревожно")],
+        [KeyboardButton(text="✍️ Написать своими словами")],
     ],
     resize_keyboard=True,
 )
 
-kb_evening_close = ReplyKeyboardMarkup(
+kb_post_done = ReplyKeyboardMarkup(
     keyboard=[
-        [KeyboardButton(text="✅ Что-то получилось")],
-        [KeyboardButton(text="🧱 Было тяжело")],
-        [KeyboardButton(text="↩️ Срывался(ась), но возвращался(ась)")],
-        [KeyboardButton(text="✍️ Напишу сам")],
+        [KeyboardButton(text="🙂 Нормально")],
+        [KeyboardButton(text="😐 Скучно")],
+        [KeyboardButton(text="😣 Тяжело")],
+        [KeyboardButton(text="🤔 Не понял, зачем это")],
+        [KeyboardButton(text="✍️ Написать своими словами")],
     ],
     resize_keyboard=True,
 )
+
+kb_evening_state = ReplyKeyboardMarkup(
+    keyboard=[
+        [KeyboardButton(text="✅ Что-то получилось")],
+        [KeyboardButton(text="😣 Было тяжело")],
+        [KeyboardButton(text="↩️ Выпал(а), но вернулся(лась)")],
+        [KeyboardButton(text="❓ Есть вопрос")],
+        [KeyboardButton(text="✍️ Написать своими словами")],
+    ],
+    resize_keyboard=True,
+)
+
+# Backward-compatible aliases
+kb_morning_checkin = kb_morning_state
+kb_evening_close = kb_evening_state
 
 kb_reactivation = ReplyKeyboardMarkup(
     keyboard=[
@@ -749,6 +801,120 @@ def get_morning_checkin_ack(trainer_key: str, mood_key: str) -> str:
     return bank.get(mood_key) or bank.get("custom") or "Принято. Идём дальше."
 
 
+def morning_greeting_text(trainer_key: str) -> str:
+    if trainer_key == "skinny":
+        return (
+            "Доброе утро.\n\n"
+            "Как ты сейчас?\n"
+            "Коротко:\n"
+            "- есть силы\n"
+            "- тяжело\n"
+            "- пусто\n"
+            "- тревожно"
+        )
+    if trainer_key == "beck":
+        return (
+            "Доброе утро.\n\n"
+            "Перед стартом важно понять состояние.\n"
+            "Как ты сейчас себя чувствуешь?"
+        )
+    return (
+        "Доброе утро.\n\n"
+        "Давай спокойно начнём день.\n"
+        "Как ты сейчас себя чувствуешь?"
+    )
+
+
+def midday_ping_text(trainer_key: str) -> str:
+    if trainer_key == "skinny":
+        return (
+            "Напомню важное:\n"
+            "основа не в настроении, а в повторяемости.\n\n"
+            "Сделаем короткий круг?"
+        )
+    if trainer_key == "beck":
+        return (
+            "Напомню важное:\n"
+            "эффект даёт не одно усилие, а повторяемость.\n\n"
+            "Хочешь коротко вернуться в тренировку?"
+        )
+    return (
+        "Напомню важное:\n"
+        "польза обычно приходит не от одного раза, а от повторения.\n\n"
+        "Давай коротко вернёмся?"
+    )
+
+
+def evening_check_text(trainer_key: str) -> str:
+    if trainer_key == "skinny":
+        return (
+            "Вечер.\n\n"
+            "Как прошёл день?\n"
+            "Выбери коротко:"
+        )
+    if trainer_key == "beck":
+        return (
+            "Вечер.\n\n"
+            "Давай коротко зафиксируем день.\n"
+            "Как он прошёл?"
+        )
+    return (
+        "Вечер.\n\n"
+        "Как у тебя прошёл день?\n"
+        "Давай коротко подведём итог."
+    )
+
+
+def day3_offer_bridge(name: str, trainer_key: str) -> str:
+    return (
+        f"{name}, за эти дни уже стало видно:\n"
+        "— где ты застреваешь\n"
+        "— что тебе мешает\n"
+        "— что тебе уже помогает заходить в задачу\n\n"
+        "Теперь вопрос не в том, можешь ли ты начать.\n"
+        "Вопрос в том, как сделать это устойчиво.\n\n"
+        "Для этого и нужна система дальше."
+    )
+
+
+def day2_plan_text(name: str, trainer_key: str, bucket: str) -> str:
+    if bucket == "distractibility":
+        core = (
+            "Твоя задача на эту неделю:\n"
+            "— сузить вход\n"
+            "— уменьшить количество переключений\n"
+            "— тренировать быстрый возврат"
+        )
+    elif bucket == "anxiety":
+        core = (
+            "Твоя задача на эту неделю:\n"
+            "— не бороться со всем сразу\n"
+            "— входить коротко\n"
+            "— не сливаться в тревогу и стыд"
+        )
+    elif bucket == "low_energy":
+        core = (
+            "Твоя задача на эту неделю:\n"
+            "— не давить на себя\n"
+            "— вернуть минимум ресурса\n"
+            "— строить день через короткие рабочие входы"
+        )
+    else:
+        core = (
+            "Твоя задача на эту неделю:\n"
+            "— понять, где тебя выбивает\n"
+            "— сократить порог входа\n"
+            "— повторять короткие рабочие шаги"
+        )
+
+    return (
+        f"{name}, на второй день уже видно чуть больше.\n\n"
+        f"{core}\n\n"
+        "Это не весь путь.\n"
+        "Но это уже твой рабочий план, а не случайные попытки."
+    )
+
+
 def daytime_ping(trainer_key: str, name: str = "") -> str:
     who = f"{name}, " if name else ""
     bank = {
@@ -910,11 +1076,16 @@ kb_yes_no_inline = InlineKeyboardMarkup(
 
 ONBOARDING_SCREENS = [
     (
-        "Ты, скорее всего, уже пробовал.\n\n"
-        "И всё равно происходит одно и то же:\n"
-        "знаешь, что делать — но не начинаешь.\n\n"
-        "Это не лень.\n\n"
+        "Похоже, ты уже не раз пробовал(а) разобраться —\n"
+        "но в какой-то момент всё равно знаешь, что делать, и не начинаешь.\n\n"
         "С этим можно работать."
+    ),
+    (
+        "Я помогу понять, где именно у тебя сейчас стоп,\n"
+        "и собрать под это короткий рабочий план.\n\n"
+        "Это не терапия и не диагноз.\n"
+        "Если станет резко тяжело — нажми «🆘 Кризис».\n\n"
+        "Как тебя зовут?"
     ),
 ]
 
@@ -1019,15 +1190,38 @@ def analysis_contract_long(name: str, trainer_key: str, bucket: str) -> str:
 contract_full_text = analysis_contract_long
 
 def month_map_text(bucket: str) -> str:
-    """Карта тренировки на месяц (показывается сразу после анализа)"""
+    """Личный маршрут на ближайшие дни (без абстрактной карты на 4 недели)."""
+    routes = {
+        "distractibility": (
+            "Твой маршрут сейчас:\n"
+            "1) Сузить вход в задачу\n"
+            "2) Уменьшить переключения\n"
+            "3) Тренировать быстрый возврат"
+        ),
+        "anxiety": (
+            "Твой маршрут сейчас:\n"
+            "1) Заходить коротко, без давления\n"
+            "2) Не сливаться в тревогу\n"
+            "3) Возвращаться без самокритики"
+        ),
+        "low_energy": (
+            "Твой маршрут сейчас:\n"
+            "1) Вернуть базовый ресурс\n"
+            "2) Делать короткие рабочие входы\n"
+            "3) Держать минимальный стабильный ритм"
+        ),
+        "mixed": (
+            "Твой маршрут сейчас:\n"
+            "1) Найти точку, где выбивает\n"
+            "2) Снизить порог входа\n"
+            "3) Закрепить возврат короткими шагами"
+        ),
+    }
+    core = routes.get(bucket or "mixed", routes["mixed"])
     return (
-        "🗺 КАРТА 4 НЕДЕЛЬ\n\n"
-        "1️⃣ Стабилизация — возврат и запуск\n"
-        "2️⃣ Работа с тревогой / вниманием\n"
-        "3️⃣ Работа с самокритикой\n"
-        "4️⃣ Удержание системы\n\n"
-        "Это не случайные упражнения.\n"
-        "Это последовательная перестройка.\n"
+        "🧭 ЛИЧНЫЙ МАРШРУТ\n\n"
+        f"{core}\n\n"
+        "Идём по шагам, с ежедневной корректировкой под тебя."
     )
 
 def guarantee_block(trainer_key: str) -> str:

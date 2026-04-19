@@ -787,6 +787,74 @@ SKILLS_DB.update({
         "explain": "Самокритика усиливает избегание."
     }
 })
+
+
+def _skill_steps(skill: dict) -> tuple[str, str, str]:
+    step1 = str(skill.get("step1") or "").strip()
+    step2 = str(skill.get("step2") or "").strip()
+    step3 = str(skill.get("step3") or "").strip()
+    if any([step1, step2, step3]):
+        return step1, step2, step3
+
+    raw_steps = skill.get("simple") or skill.get("steps") or []
+    if isinstance(raw_steps, list) and raw_steps:
+        step1 = str(raw_steps[0] if len(raw_steps) > 0 else "").strip()
+        step2 = str(raw_steps[1] if len(raw_steps) > 1 else "").strip()
+        step3 = str(raw_steps[2] if len(raw_steps) > 2 else "").strip()
+        return step1, step2, step3
+
+    how = str(skill.get("how") or "").strip()
+    return how, "", ""
+
+
+def _normalize_skill_schema(skill: dict) -> None:
+    name = str(skill.get("name") or "Навык").strip()
+    goal = str(skill.get("goal") or "").strip()
+    step1, step2, step3 = _skill_steps(skill)
+    minimum = str(skill.get("minimum") or skill.get("micro") or step1).strip()
+    why_short = str(skill.get("why_short") or skill.get("explain") or "").strip()
+
+    if not why_short:
+        why_short = "Снижает порог входа и помогает удержаться в задаче."
+
+    short_text = (
+        f"🧩 {name}\n"
+        f"🎯 {goal}\n"
+        f"⚡ Минимум: {minimum}"
+    ).strip()
+
+    long_parts = [
+        f"🧩 {name}",
+        f"🎯 Зачем: {goal}",
+        "",
+        "Делай так:",
+        f"1. {step1}",
+        f"2. {step2}",
+        f"3. {step3}",
+        "",
+        f"⚡ Минимум: {minimum}",
+        "",
+        f"🧠 Почему помогает: {why_short}",
+    ]
+    long_text = "\n".join(long_parts)
+
+    skill["name"] = name
+    skill["goal"] = goal
+    skill["step1"] = step1
+    skill["step2"] = step2
+    skill["step3"] = step3
+    skill["minimum"] = minimum
+    skill["why_short"] = why_short
+    skill["coach_skinny"] = str(skill.get("coach_skinny") or f"Коротко: {minimum}.").strip()
+    skill["coach_marsha"] = str(skill.get("coach_marsha") or f"Мягко и без рывка: {minimum}.").strip()
+    skill["coach_beck"] = str(skill.get("coach_beck") or f"Проверка делом: {minimum}.").strip()
+    skill["short_text"] = str(skill.get("short_text") or short_text).strip()
+    skill["long_text"] = str(skill.get("long_text") or long_text).strip()
+
+
+for _skill in SKILLS_DB.values():
+    _normalize_skill_schema(_skill)
+
 # PATCH 2 — Функция построения плана на 4 недели
 def build_4_week_plan(track: str) -> list:
     """
