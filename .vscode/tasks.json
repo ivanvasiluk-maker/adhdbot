@@ -1,0 +1,46 @@
+{
+	"version": "2.0.0",
+	"tasks": [
+		{
+			"label": "Run pytest",
+			"type": "shell",
+			"command": "pytest",
+			"args": [
+				"-q"
+			],
+			"isBackground": false
+		},
+		{
+			"label": "Run pytest via venv python",
+			"type": "shell",
+			"command": "c:/Users/ivanv/Desktop/adhd_bot/venv/Scripts/python.exe",
+			"args": [
+				"-m",
+				"pytest",
+				"-q"
+			],
+			"isBackground": false
+		},
+		{
+			"label": "Check skill key coverage",
+			"type": "shell",
+			"command": "c:/Users/ivanv/Desktop/adhd_bot/venv/Scripts/python.exe",
+			"args": [
+				"-c",
+				"from skills import SKILLS_DB\nfrom skills_texts import SKILLS_TEXTS\ndb_keys = set(SKILLS_DB.keys())\nst_keys = set(SKILLS_TEXTS.keys())\nprint('SKILLS_DB count:', len(db_keys))\nprint('SKILLS_TEXTS count:', len(st_keys))\nprint()\nprint('IN DB, NOT in TEXTS:')\nfor k in sorted(db_keys - st_keys):\n    print(' ', k)\nprint()\nprint('IN TEXTS, NOT in DB:')\nfor k in sorted(st_keys - db_keys):\n    print(' ', k)\nprint()\nprint('ALL DB keys:')\nfor k in sorted(db_keys):\n    print(' ', k)\n"
+			],
+			"isBackground": false
+		},
+		{
+			"label": "Run pytest after deletion",
+			"type": "shell",
+			"command": "c:/Users/ivanv/Desktop/adhd_bot/venv/Scripts/python.exe",
+			"args": [
+				"-m",
+				"pytest",
+				"-q"
+			],
+			"isBackground": false
+		}
+	]
+}
