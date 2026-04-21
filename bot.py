@@ -1,4 +1,4 @@
-# ============================================================
+﻿# ============================================================
 # ADHD SELF-REGULATION TRAINER BOT (REFACTORED)
 # -:  (),  (),  ()
 # ====================
@@ -573,13 +573,13 @@ async def main_flow(m: Message):
     u["reactivation_level"] = 0
 
     #  :     ,     -
-    if (text == " " or "" in low) and u.get("stage") not in {"crisis_choose_mode", "crisis_voice", "crisis_text", "crisis_plan_confirm"}:
+    if (text == "🆘 Кризис" or "кризис" in low) and u.get("stage") not in {"crisis_choose_mode", "crisis_voice", "crisis_text", "crisis_plan_confirm"}:
         u["stage"] = "crisis_choose_mode"
         await track_user_event(u, u["stage"], "crisis_open")
-        await m.answer(" .  ?", reply_markup=kb_crisis_mode)
+        await m.answer("🆘 Ок. Как удобнее?", reply_markup=kb_crisis_mode)
         return
 
-    if u.get("stage") == "evening_close_wait":
+    if u.get("stage") in {"evening_close_wait", "day_evening"}:
         trainer_key = u.get("trainer_key") or "marsha"
         if not text:
             await m.answer("       .", reply_markup=kb_evening_close)
@@ -715,10 +715,8 @@ async def main_flow(m: Message):
     # LIVE DIALOG PATTERN HOOK
     # ============================================================
     dialog_stages = {
-        "await_problem_text",
         "analysis_refine",
         "training",
-        "morning_checkin_custom",
         "await_training_target",
     }
 
@@ -813,7 +811,7 @@ async def main_flow(m: Message):
     # ============================================================
     if u["stage"] == "trainer_intro":
         low = (text or "").lower()
-        if "??" in low:
+        if "да" in low:
             trainer_key = u.get("trainer_key") or "marsha"
             mode_by_trainer = {
                 "marsha": "easy",
@@ -824,16 +822,16 @@ async def main_flow(m: Message):
             u["stage"] = "await_input_mode"
             await save_user(u, DB_PATH)
             await m.answer(
-                f"{u.get('name') or '??'}, ??? ??????? ?????? ????????????",
+                f"{u.get('name') or 'Ок'}, как удобнее пройти диагностику?",
                 reply_markup=kb_input_mode
             )
             return
-        if "???" in low:
+        if "нет" in low:
             u["stage"] = "await_trainer"
             await save_user(u, DB_PATH)
-            await m.answer("?????? ??????? ??????? ??", reply_markup=kb_trainers)
+            await m.answer("Выбери другого тренера 👇", reply_markup=kb_trainers)
             return
-        await m.answer("??????: ? ?? / ? ???", reply_markup=kb_yes_no)
+        await m.answer("Выбери: ✅ Да / ❌ Нет", reply_markup=kb_yes_no)
         return
 
     # ============================================================
@@ -891,7 +889,7 @@ async def main_flow(m: Message):
         if text and text.lower() == "":
             u["stage"] = "await_input_mode"
             await save_user(u, DB_PATH)
-            await m.answer("??. ?????? ?????? ???????????:", reply_markup=kb_input_mode)
+            await m.answer("Ок. Выбери формат диагностики:", reply_markup=kb_input_mode)
             return
         if not m.voice:
             await m.answer("  ")
@@ -1348,7 +1346,7 @@ async def main_flow(m: Message):
         if text == " ":
             u["stage"] = "crisis_choose_mode"
             await save_user(u, DB_PATH)
-            await m.answer(" .  ?", reply_markup=kb_crisis_mode)
+            await m.answer("🆘 Ок. Как удобнее?", reply_markup=kb_crisis_mode)
             return
 
         await m.answer("  ", reply_markup=kb_skill_entry)
@@ -1392,7 +1390,7 @@ async def main_flow(m: Message):
         if text == " ":
             u["stage"] = "crisis_choose_mode"
             await save_user(u, DB_PATH)
-            await m.answer(" .  ?", reply_markup=kb_crisis_mode)
+            await m.answer("🆘 Ок. Как удобнее?", reply_markup=kb_crisis_mode)
             return
 
         await m.answer("  ", reply_markup=kb_training_run)
@@ -1988,4 +1986,5 @@ async def main():
 
 if __name__ == "__main__":
     asyncio.run(main())
+
 
