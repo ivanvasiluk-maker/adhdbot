@@ -39,7 +39,6 @@ from texts import (
     daytime_ping, evening_close_question, evening_close_coach_reply, kb_evening_close,
     reactivation_6h, reactivation_24h, reactivation_3d, reactivation_7d, kb_reactivation,
     reactivation_soft_return, kb_soft_return,
-    kb_mode_choice, MODE_CHOICE_TEXT,
     build_week_plan, build_payment_offer,
     morning_checkin_text,
 )
@@ -478,7 +477,6 @@ async def main_flow(m: Message):
         "ask_name",
         "await_trainer",
         "trainer_intro",
-        "await_mode",
         "await_input_mode",
         "await_problem_text",
         "await_problem_voice",
@@ -787,9 +785,13 @@ async def main_flow(m: Message):
     if u["stage"] == "trainer_intro":
         low = (text or "").lower()
         if "да" in low:
-            u["stage"] = "await_mode"
+            u["stage"] = "await_input_mode"
+            u["mode"] = "normal"
             await save_user(u, DB_PATH)
-            await m.answer(MODE_CHOICE_TEXT, reply_markup=kb_mode_choice)
+            await m.answer(
+                f"{u.get('name') or 'Ок'}, как удобнее пройти диагностику?",
+                reply_markup=kb_input_mode
+            )
             return
         if "нет" in low:
             u["stage"] = "await_trainer"
@@ -797,30 +799,6 @@ async def main_flow(m: Message):
             await m.answer("Выбери другого тренера 👇", reply_markup=kb_trainers)
             return
         await m.answer("Выбери: ✅ Да / ❌ Нет", reply_markup=kb_yes_no)
-        return
-
-    # ============================================================
-    # MODE SELECTION
-    # ============================================================
-    if u.get("stage") == "await_mode":
-        low = (text or "").lower().strip()
-
-        if text == "🌱 Бережно" or "береж" in low:
-            u["mode"] = "easy"
-        elif text == "⚙️ Стандартно" or "стандарт" in low:
-            u["mode"] = "normal"
-        elif text == "🔥 Собранно" or "собран" in low or "жест" in low:
-            u["mode"] = "hard"
-        else:
-            await m.answer("Выбери режим кнопкой 👇", reply_markup=kb_mode_choice)
-            return
-
-        u["stage"] = "await_input_mode"
-        await track_user_event(u, "onboarding", "mode_selected", {"mode": u["mode"]})
-        await m.answer(
-            f"{u.get('name') or 'Ок'}, как удобнее пройти диагностику?",
-            reply_markup=kb_input_mode
-        )
         return
 
     # ============================================================
@@ -1975,4 +1953,3 @@ async def main():
 
 if __name__ == "__main__":
     asyncio.run(main())
-

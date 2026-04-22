@@ -197,15 +197,6 @@ TRAINER_BUTTONS = {
     "beck": "🧠 Бек — объясняю",
 }
 
-MODE_CHOICE_TEXT = (
-    "Ещё один выбор перед стартом.\n\n"
-    "Как тебе сейчас лучше заходить в работу?\n\n"
-    "🌱 Бережно - если много давления, тревоги или усталости\n"
-    "⚙️ Стандартно - если нужен обычный рабочий ритм\n"
-    "🔥 Собранно - если хочешь прямее и жёстче\n\n"
-    "Это не навсегда. Потом можно поменять."
-)
-
 # ============================================================
 # 🐈 TRAINER PRESENTATION BLOCK
 # ============================================================
@@ -458,15 +449,6 @@ kb_trainers = ReplyKeyboardMarkup(
         [KeyboardButton(text="🐈‍⬛ Скинни (жёстко)")],
         [KeyboardButton(text="🐈 Марша (мягко)")],
         [KeyboardButton(text="🐈‍🦁 Бек (аналитично)")],
-    ],
-    resize_keyboard=True,
-)
-
-kb_mode_choice = ReplyKeyboardMarkup(
-    keyboard=[
-        [KeyboardButton(text="🌱 Бережно")],
-        [KeyboardButton(text="⚙️ Стандартно")],
-        [KeyboardButton(text="🔥 Собранно")],
     ],
     resize_keyboard=True,
 )
@@ -853,6 +835,7 @@ kb_analysis_map = ReplyKeyboardMarkup(
 kb_skill_entry = ReplyKeyboardMarkup(
     keyboard=[
         [KeyboardButton(text="💪 Давай тренировать навык")],
+        [KeyboardButton(text="📊 Мой прогресс")],
         [KeyboardButton(text="ℹ️ Подробнее про навык")],
         [KeyboardButton(text="🆘 Кризис")],
     ],
@@ -863,7 +846,73 @@ kb_training_run = ReplyKeyboardMarkup(
     keyboard=[
         [KeyboardButton(text="✅ Сделал(а)")],
         [KeyboardButton(text="↩️ Вернулся(лась)")],
+        [KeyboardButton(text="📊 Мой прогресс")],
         [KeyboardButton(text="🆘 Кризис")],
+    ],
+    resize_keyboard=True,
+)
+
+kb_progress_only = ReplyKeyboardMarkup(
+    keyboard=[
+        [KeyboardButton(text="📊 Мой прогресс")],
+        [KeyboardButton(text="💪 Давай тренировать навык")],
+        [KeyboardButton(text="🆘 Кризис")],
+    ],
+    resize_keyboard=True,
+)
+
+
+def progress_screen_text(u: dict, skill_name: str = "") -> str:
+    trainer_key = u.get("trainer_key") or "marsha"
+    day = int(u.get("day") or 1)
+    points = int(u.get("points") or 0)
+    level = int(u.get("level") or 1)
+    streak = int(u.get("streak") or 0)
+    done_count = int(u.get("done_count") or 0)
+    return_count = int(u.get("return_count") or 0)
+    crisis_count = int(u.get("crisis_count") or 0)
+    bucket = u.get("bucket") or "mixed"
+    today_target = (u.get("today_target") or "").strip()
+
+    bucket_labels = {
+        "anxiety": "тревожный вход",
+        "low_energy": "низкий ресурс / тяжело начать",
+        "distractibility": "отвлекаемость / удержание",
+        "mixed": "смешанный профиль",
+    }
+
+    if not skill_name:
+        skill_name = "ещё не выбран"
+    if not today_target:
+        today_target = "не задана"
+
+    coach_line = {
+        "skinny": "Факт важнее настроения. Продолжай короткими заходами.",
+        "marsha": "Даже маленькие шаги считаются. Ты уже в процессе.",
+        "beck": "Стабильность строится повторением. Даже 1 короткий круг — это тренировка.",
+    }.get(trainer_key, "Ты уже в процессе.")
+
+    return (
+        "📊 Мой прогресс\n\n"
+        f"День: {day}\n"
+        f"Профиль: {bucket_labels.get(bucket, bucket)}\n"
+        f"Навык дня: {skill_name}\n"
+        f"Задача дня: {today_target}\n\n"
+        f"✅ Запусков: {done_count}\n"
+        f"↩️ Возвратов: {return_count}\n"
+        f"🆘 Кризисов: {crisis_count}\n\n"
+        f"🏅 Очки: {points}\n"
+        f"📈 Уровень: {level}\n"
+        f"🔥 Стрик: {streak}\n\n"
+        f"{coach_line}"
+    )
+
+kb_after_done = ReplyKeyboardMarkup(
+    keyboard=[
+        [KeyboardButton(text="🙂 Чуть легче")],
+        [KeyboardButton(text="😐 Скучно")],
+        [KeyboardButton(text="😣 Тяжело")],
+        [KeyboardButton(text="🤔 Не понял, зачем это")],
     ],
     resize_keyboard=True,
 )
@@ -1029,6 +1078,39 @@ def month_map_text(bucket: str) -> str:
         "Это не случайные упражнения.\n"
         "Это последовательная перестройка.\n"
     )
+
+
+def personal_route_text(name: str, trainer_key: str, bucket: str) -> str:
+    routes = {
+        "anxiety": (
+            "Сначала уберём перегруз на входе.\n"
+            "Потом научимся не сцепляться с тревогой.\n"
+            "Потом закрепим спокойный возврат в задачу."
+        ),
+        "low_energy": (
+            "Сначала вернём более мягкий вход в день.\n"
+            "Потом соберём запуск без давления.\n"
+            "Потом будем удерживать ритм без самоедства."
+        ),
+        "distractibility": (
+            "Сначала сузим вход в задачу.\n"
+            "Потом потренируем возврат внимания.\n"
+            "Потом будем удерживать один рабочий канал дольше."
+        ),
+        "mixed": (
+            "Сначала поймаем твою главную точку стопа.\n"
+            "Потом подберём короткий рабочий вход.\n"
+            "Потом закрепим возврат без слива дня."
+        ),
+    }
+
+    route = routes.get(bucket, routes["mixed"])
+
+    if trainer_key == "skinny":
+        return f"{name}, вот твой маршрут.\n\n{route}\n\nНе общая схема. Под твою ситуацию."
+    if trainer_key == "beck":
+        return f"{name}, по тому, что уже видно, маршрут такой:\n\n{route}\n\nЭто рабочая гипотеза под твой паттерн."
+    return f"{name}, я собрала для тебя такой маршрут:\n\n{route}\n\nНе шаблон для всех, а опора под твою ситуацию."
 
 def guarantee_block(trainer_key: str) -> str:
     """Гарантийный блок"""

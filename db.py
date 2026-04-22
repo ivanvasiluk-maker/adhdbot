@@ -31,6 +31,7 @@ USER_FIELDS = [
     "bucket",
     "analysis_json",
     "plan_json",
+    "current_skill_id",
     "pending_skill_id",
     "pending_skill_day",
     "today_target",
@@ -74,6 +75,7 @@ def default_user(uid: int) -> Dict[str, Any]:
         "bucket": "mixed",
         "analysis_json": None,
         "plan_json": None,
+        "current_skill_id": None,
         "pending_skill_id": None,
         "pending_skill_day": None,
         "today_target": None,
@@ -120,6 +122,7 @@ async def init_db(db_path: str):
                 bucket TEXT,
                 analysis_json TEXT,
                 plan_json TEXT,
+                current_skill_id TEXT,
                 pending_skill_id TEXT,
                 pending_skill_day INTEGER,
                 today_target TEXT,
@@ -223,6 +226,7 @@ EXTRA_USER_COLS = {
     "return_count": "INTEGER",
     "analysis_retry_count": "INTEGER",  # сколько раз пользователь сказал "ты меня не понял"
     "has_started_training": "INTEGER",  # 1 если юзер начал день 1
+    "current_skill_id": "TEXT",
     "pending_skill_id": "TEXT",
     "pending_skill_day": "INTEGER",
     "today_target": "TEXT",

@@ -127,8 +127,11 @@ async def start_day(m: Message, u: dict, day: int, db_path: str, sheets_webhook:
 
     u["day"] = day
     u["stage"] = "morning_checkin"
+    u["current_skill_id"] = sid
     u["pending_skill_id"] = sid
     u["pending_skill_day"] = day
+    if not u.get("today_target"):
+        u["today_target"] = ""
     u["has_started_training"] = 1
     u["day_started_at"] = time.time()
     await save_user(u, db_path)
