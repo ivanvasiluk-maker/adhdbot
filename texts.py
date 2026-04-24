@@ -933,10 +933,31 @@ kb_after_return = ReplyKeyboardMarkup(
     resize_keyboard=True,
 )
 
+BTN_CONTINUE_PLAN = "📅 Хочу продолжить по плану"
+BTN_THINK = "🤔 Пока думаю"
+BTN_WHAT_NEXT = "❓ Что я получу дальше"
+BTN_PAY = "💳 Продолжить"
+
+kb_day2_offer = ReplyKeyboardMarkup(
+    keyboard=[
+        [KeyboardButton(text=BTN_CONTINUE_PLAN)],
+        [KeyboardButton(text=BTN_THINK)],
+    ],
+    resize_keyboard=True,
+)
+
+kb_paywall = ReplyKeyboardMarkup(
+    keyboard=[
+        [KeyboardButton(text=BTN_PAY)],
+        [KeyboardButton(text=BTN_WHAT_NEXT)],
+    ],
+    resize_keyboard=True,
+)
+
 kb_pay_simple = ReplyKeyboardMarkup(
     keyboard=[
-        [KeyboardButton(text="💳 Продолжить")],
-        [KeyboardButton(text="🤔 Пока нет")],
+        [KeyboardButton(text=BTN_PAY)],
+        [KeyboardButton(text=BTN_THINK)],
     ],
     resize_keyboard=True,
 )
@@ -959,11 +980,15 @@ kb_yes_no_inline = InlineKeyboardMarkup(
 
 ONBOARDING_SCREENS = [
     (
-        "Ты, скорее всего, уже пробовал.\n\n"
-        "И всё равно происходит одно и то же:\n"
-        "знаешь, что делать — но не начинаешь.\n\n"
-        "Это не лень.\n\n"
+        "Похоже, ты уже не раз пробовал(а) разобраться —\n"
+        "но в какой-то момент всё равно знаешь, что делать, и не начинаешь.\n\n"
         "С этим можно работать."
+    ),
+    (
+        "Я помогу понять, где именно у тебя сейчас стоп,\n"
+        "и собрать под это короткий рабочий план.\n\n"
+        "Это не терапия и не диагноз.\n"
+        "Если станет резко тяжело — нажми «🆘 Кризис»."
     ),
 ]
 

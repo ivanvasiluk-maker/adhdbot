@@ -200,13 +200,6 @@ async def start_day(m: Message, u: dict, day: int, db_path: str, sheets_webhook:
     u["last_active"] = now
     await save_user(u, db_path)
 
-    # Запуск отложенного анти-слива пинга через 5 минут (дни 1-3)
-    if day in {1, 2, 3}:
-        asyncio.create_task(
-            _delayed_anti_churn_check(m.bot, m.chat.id, trainer_key, day)
-        )
-
-
 async def _delayed_anti_churn_check(bot, chat_id: int, trainer_key: str, day_num: int):
     """Пинг через 5 минут, если человек молчит (дни 1-3)"""
     await asyncio.sleep(300)

@@ -59,6 +59,10 @@ USER_FIELDS = [
     "last_event",
     "last_event_at",
     "stuck_flag",
+    "profile",
+    "payment_status",
+    "last_offer_ts",
+    "offer_seen",
 ]
 
 def default_user(uid: int) -> Dict[str, Any]:
@@ -103,6 +107,10 @@ def default_user(uid: int) -> Dict[str, Any]:
         "last_event": "",
         "last_event_at": 0.0,
         "stuck_flag": "",
+        "profile": {},
+        "payment_status": "paid" if TEST_MODE else "none",
+        "last_offer_ts": 0.0,
+        "offer_seen": 0,
     }
 
 async def init_db(db_path: str):
@@ -150,6 +158,10 @@ async def init_db(db_path: str):
                 last_event TEXT,
                 last_event_at REAL,
                 stuck_flag TEXT
+                ,profile TEXT
+                ,payment_status TEXT
+                ,last_offer_ts REAL
+                ,offer_seen INTEGER
             )
             """
         )
@@ -238,6 +250,10 @@ EXTRA_USER_COLS = {
     "last_event": "TEXT",
     "last_event_at": "REAL",
     "stuck_flag": "TEXT",
+    "profile": "TEXT",
+    "payment_status": "TEXT",
+    "last_offer_ts": "REAL",
+    "offer_seen": "INTEGER",
 }
 
 async def migrate_db(db_path: str):
