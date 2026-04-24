@@ -137,39 +137,39 @@ async def start_day(m: Message, u: dict, day: int, db_path: str, sheets_webhook:
     await save_user(u, db_path)
 
     # День 2: персональный план
-    if day == 2:
-        from texts import day2_personal_plan_text
-        target = u.get("today_target") or ""
-        await m.answer(
-            trainer_say(
-                trainer_key,
-                day2_personal_plan_text(
-                    u.get("name") or "друг",
-                    trainer_key,
-                    u.get("bucket") or "mixed",
-                    target
-                )
-            )
-        )
+    # if day == 2:
+    #     from texts import day2_personal_plan_text
+    #     target = u.get("today_target") or ""
+    #     await m.answer(
+    #         trainer_say(
+    #             trainer_key,
+    #             day2_personal_plan_text(
+    #                 u.get("name") or "друг",
+    #                 trainer_key,
+    #                 u.get("bucket") or "mixed",
+    #                 target
+    #             )
+    #         )
+    #     )
 
     # Анти-слив текст на дни 1-3
-    if day in {1, 2, 3}:
-        from texts import anti_churn_day_text
-        anti_text = anti_churn_day_text(day, trainer_key)
-        if anti_text:
-            await m.answer(trainer_say(trainer_key, anti_text))
+    # if day in {1, 2, 3}:
+    #     from texts import anti_churn_day_text
+    #     anti_text = anti_churn_day_text(day, trainer_key)
+    #     if anti_text:
+    #         await m.answer(trainer_say(trainer_key, anti_text))
 
     metrics = u.get("metrics") or {}
     try:
         starts_progress = int(metrics.get("starts") or 0)
     except (TypeError, ValueError):
         starts_progress = 0
-    await m.answer(
-        trainer_say(
-            trainer_key,
-            f"{get_daytime_greeting()}.\n{emotional_hook(u.get('day') or day, starts_progress)}",
-        )
-    )
+    # await m.answer(
+    #     trainer_say(
+    #         trainer_key,
+    #         f"{get_daytime_greeting()}.\n{emotional_hook(u.get('day') or day, starts_progress)}",
+    #     )
+    # )
 
     # Утренний быстрый чек — только начиная со 2-го дня
     if day > 1:
@@ -178,9 +178,19 @@ async def start_day(m: Message, u: dict, day: int, db_path: str, sheets_webhook:
         energy = u.get("last_energy") or "?"
         await m.answer(f"🕒 Быстрый чек\nСон: {sleep}\nТревога: {anxiety}\nЭнергия: {energy}")
 
-    opener = get_morning_checkin_opener(trainer_key)
-    question = "Что у тебя сегодня на уме?"
-    await m.answer(trainer_say(trainer_key, f"{opener}\n\n{question}"), reply_markup=kb_morning_checkin)
+    # opener = get_morning_checkin_opener(trainer_key)
+    # question = "Что у тебя сегодня на уме?"
+    # await m.answer(trainer_say(trainer_key, f"{opener}\n\n{question}"), reply_markup=kb_morning_checkin)
+
+    await m.answer(
+        trainer_say(
+            trainer_key,
+            f"{get_daytime_greeting()}.\n\n"
+            "Сегодня работаем коротко.\n"
+            "Сначала отметь состояние, потом дадим навык дня."
+        ),
+        reply_markup=kb_morning_checkin,
+    )
 
     # 2️⃣ +1 балл прогресса
     u["points"] = int(u.get("points") or 0) + 1
