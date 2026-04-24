@@ -835,19 +835,15 @@ kb_analysis_map = ReplyKeyboardMarkup(
 kb_skill_entry = ReplyKeyboardMarkup(
     keyboard=[
         [KeyboardButton(text="💪 Давай тренировать навык")],
-        [KeyboardButton(text="📊 Мой прогресс")],
-        [KeyboardButton(text="ℹ️ Подробнее про навык")],
-        [KeyboardButton(text="🆘 Кризис")],
+        [KeyboardButton(text="📊 Мой прогресс"), KeyboardButton(text="🆘 Кризис")],
     ],
     resize_keyboard=True,
 )
 
 kb_training_run = ReplyKeyboardMarkup(
     keyboard=[
-        [KeyboardButton(text="✅ Сделал(а)")],
-        [KeyboardButton(text="↩️ Вернулся(лась)")],
-        [KeyboardButton(text="📊 Мой прогресс")],
-        [KeyboardButton(text="🆘 Кризис")],
+        [KeyboardButton(text="✅ Сделал(а)"), KeyboardButton(text="↩️ Вернулся(лась)")],
+        [KeyboardButton(text="📊 Мой прогресс"), KeyboardButton(text="🆘 Кризис")],
     ],
     resize_keyboard=True,
 )
