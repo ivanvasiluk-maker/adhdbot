@@ -6,6 +6,20 @@ import random
 from datetime import datetime
 from aiogram.types import KeyboardButton, ReplyKeyboardMarkup, InlineKeyboardMarkup, InlineKeyboardButton
 
+# Совместимость деплоя: этот объект импортируется в некоторых версиях bot.py.
+kb_skill_more = InlineKeyboardMarkup(
+    inline_keyboard=[
+        [InlineKeyboardButton(text="Ещё навык", callback_data="skill_more")]
+    ]
+)
+
+
+def __getattr__(name: str):
+    # Защита от падения при from texts import kb_skill_more в старых сборках.
+    if name == "kb_skill_more":
+        return kb_skill_more
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
+
 # ============================================================
 # TRAINERS (стили)
 # ============================================================
