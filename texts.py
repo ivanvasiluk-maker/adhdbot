@@ -104,13 +104,9 @@ def trainer_say(trainer_key: str, text: str) -> str:
 def get_daytime_greeting() -> str:
     hour = datetime.now().hour
 
-    if 5 <= hour < 12:
+    if 5 <= hour < 11:
         return "Доброе утро"
-    if 12 <= hour < 18:
-        return "Добрый день"
-    if 18 <= hour < 23:
-        return "Добрый вечер"
-    return "Привет"
+    return ""
 
 
 def emotional_hook(day: int, progress: int) -> str:
@@ -455,9 +451,8 @@ def skill_training_text(skill: dict, trainer_key: str = "marsha") -> str:
 
 kb_input_mode = ReplyKeyboardMarkup(
     keyboard=[
-        [KeyboardButton(text="🧠 Диагностика текстом")],
-        [KeyboardButton(text="🎙 Диагностика голосом")],
-        [KeyboardButton(text="❓ Быстрый тест (5 вопросов)")],
+        [KeyboardButton(text="🧠 Написать словами")],
+        [KeyboardButton(text="⚡ Быстрый выбор (кнопки)")],
     ],
     resize_keyboard=True,
 )
@@ -493,9 +488,60 @@ kb_yes_no = ReplyKeyboardMarkup(
     resize_keyboard=True
 )
 
+kb_day1_mirror = ReplyKeyboardMarkup(
+    keyboard=[[KeyboardButton(text="✅ Да")], [KeyboardButton(text="❌ Не совсем")]],
+    resize_keyboard=True,
+)
+
+kb_day1_try = ReplyKeyboardMarkup(
+    keyboard=[[KeyboardButton(text="💪 Давай пробовать")]],
+    resize_keyboard=True,
+)
+
+kb_day1_start = ReplyKeyboardMarkup(
+    keyboard=[[KeyboardButton(text="▶️ Начать")]],
+    resize_keyboard=True,
+)
+
+kb_day1_result = ReplyKeyboardMarkup(
+    keyboard=[
+        [KeyboardButton(text="1) получилось начать")],
+        [KeyboardButton(text="2) было тяжело")],
+        [KeyboardButton(text="3) не сделал")],
+    ],
+    resize_keyboard=True,
+)
+
 kb_morning_checkin = ReplyKeyboardMarkup(
     keyboard=[
         [KeyboardButton(text="😐 норм"), KeyboardButton(text="😣 тяжело")],
+    ],
+    resize_keyboard=True,
+)
+
+kb_daily_check_sleep = ReplyKeyboardMarkup(
+    keyboard=[
+        [KeyboardButton(text="😴 Плохо спал")],
+        [KeyboardButton(text="😐 Норм")],
+        [KeyboardButton(text="🙂 Выспался")],
+    ],
+    resize_keyboard=True,
+)
+
+kb_daily_check_anxiety = ReplyKeyboardMarkup(
+    keyboard=[
+        [KeyboardButton(text="😰 Тревога высокая")],
+        [KeyboardButton(text="😐 Средне")],
+        [KeyboardButton(text="🙂 Спокойно")],
+    ],
+    resize_keyboard=True,
+)
+
+kb_daily_check_energy = ReplyKeyboardMarkup(
+    keyboard=[
+        [KeyboardButton(text="🔋 Нет сил")],
+        [KeyboardButton(text="😐 Норм")],
+        [KeyboardButton(text="⚡ Энергия есть")],
     ],
     resize_keyboard=True,
 )
@@ -769,16 +815,12 @@ def daytime_ping(trainer_key: str, name: str = "") -> str:
 
 
 def evening_close_question(trainer_key: str) -> str:
-    intro = {
-        "marsha": "Перед сном коротко:",
-        "skinny": "Закроем день одним вопросом:",
-        "beck": "Короткая фиксация дня:",
-    }.get(trainer_key, "Коротко на вечер:")
-    question = random.choice([
-        "Что сегодня получилось хотя бы частично?",
-        "Где сегодня было труднее всего?",
-    ])
-    return f"{intro}\n{question}"
+    return (
+        "Как сегодня с задачей?\n\n"
+        "1) сделал\n"
+        "2) частично\n"
+        "3) не получилось"
+    )
 
 
 def evening_close_coach_reply(trainer_key: str, user_text: str) -> str:
