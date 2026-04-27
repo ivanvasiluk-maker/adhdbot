@@ -37,7 +37,7 @@ from texts import (
     resolve_bucket_from_test, create_test_question_keyboard,
     analysis_contract_short, personal_route_text,
     skill_explain, skill_card_text, skill_training_text, get_morning_checkin_ack,
-    kb_skill_entry, kb_training_run, kb_skill_more, kb_after_return, kb_after_done, kb_pay_simple,
+    kb_skill_entry, kb_training_run, kb_after_return, kb_after_done, kb_pay_simple,
     resolve_bucket_from_test, create_test_question_keyboard,
     analysis_contract_short, personal_route_text,
     skill_explain, skill_detail_text, skill_card_text, skill_training_text, get_morning_checkin_ack,
