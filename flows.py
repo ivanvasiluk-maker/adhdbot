@@ -14,7 +14,7 @@ from texts import (
     trainer_say, skill_explain,
     kb_yes_no, kb_training_run,
     morning_checkin_text,
-    CRISIS_LIMIT, kb_morning_checkin, get_morning_checkin_opener,
+    CRISIS_LIMIT, kb_morning_checkin, kb_daily_check_sleep, get_morning_checkin_opener,
     emotional_hook, get_daytime_greeting,
 )
 from skills import SKILLS_DB, get_current_plan, build_28_day_plan, build_plan
@@ -126,7 +126,7 @@ async def start_day(m: Message, u: dict, day: int, db_path: str, sheets_webhook:
     trainer_key = u.get("trainer_key") or "marsha"
 
     u["day"] = day
-    u["stage"] = "morning_checkin"
+    u["stage"] = "daily_check_sleep"
     u["current_skill_id"] = sid
     u["pending_skill_id"] = sid
     u["pending_skill_day"] = day
@@ -182,14 +182,16 @@ async def start_day(m: Message, u: dict, day: int, db_path: str, sheets_webhook:
     # question = "Что у тебя сегодня на уме?"
     # await m.answer(trainer_say(trainer_key, f"{opener}\n\n{question}"), reply_markup=kb_morning_checkin)
 
+    greeting = get_daytime_greeting()
+    prefix = f"{greeting}.\n\n" if greeting else ""
     await m.answer(
         trainer_say(
             trainer_key,
-            f"{get_daytime_greeting()}.\n\n"
+            f"{prefix}"
             "Сегодня работаем коротко.\n"
             "Сначала отметь состояние, потом дадим навык дня."
         ),
-        reply_markup=kb_morning_checkin,
+        reply_markup=kb_daily_check_sleep,
     )
 
     # 2️⃣ +1 балл прогресса
