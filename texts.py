@@ -847,6 +847,12 @@ kb_training_run = ReplyKeyboardMarkup(
     resize_keyboard=True,
 )
 
+kb_skill_more = InlineKeyboardMarkup(
+    inline_keyboard=[
+        [InlineKeyboardButton(text="Ещё навык", callback_data="skill_more")]
+    ]
+)
+
 kb_progress_only = ReplyKeyboardMarkup(
     keyboard=[
         [KeyboardButton(text="📊 Мой прогресс")],
