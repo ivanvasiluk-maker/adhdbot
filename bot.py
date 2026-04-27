@@ -30,11 +30,11 @@ from texts import (
     TEST_QUESTIONS, ONBOARDING_SCREENS,
     trainer_say, kb_trainers, kb_input_mode, kb_yes_no,
     kb_crisis_mode, kb_analysis_confirm, kb_analysis_contract,
-    kb_analysis_map, kb_morning_checkin,
+    kb_morning_checkin,
     payment_inline_full,
-    kb_skill_entry, kb_training_run, kb_skill_more, kb_after_return, kb_pay_simple,
+    kb_skill_entry, kb_training_run, kb_skill_more, kb_after_return, kb_after_done, kb_pay_simple,
     resolve_bucket_from_test, create_test_question_keyboard,
-    analysis_contract_short, contract_full_text, month_map_text, guarantee_block,
+    analysis_contract_short, personal_route_text,
     skill_explain, skill_detail_text, skill_card_text, skill_training_text, get_morning_checkin_ack,
     daytime_ping, evening_close_question, evening_close_coach_reply, kb_evening_close,
     reactivation_6h, reactivation_24h, reactivation_3d, reactivation_7d, kb_reactivation,
@@ -43,14 +43,9 @@ from texts import (
     morning_checkin_text,
 )
 from dialog_engine import (
-    detect_dialog_pattern,
-    get_dialog_reply,
-    need_clarify,
-    clarify_question,
     render_behavior_chain,
     anti_churn_message,
     trainer_block,
-    MISUNDERSTOOD_FALLBACK,
     guidance_micro_phrase,
 )
 from skills import (
@@ -283,25 +278,6 @@ async def ai_micro_reflect(user_text: str, trainer_key: str, client=None, model:
     return fallback.get(trainer_key, fallback["marsha"])
 
 
-async def ai_fallback_answer(user_text: str) -> Optional[str]:
-    try:
-        from openai import AsyncOpenAI
-
-        client = AsyncOpenAI()
-        resp = await client.chat.completions.create(
-            model="gpt-4o-mini",
-            messages=[
-                {"role": "system", "content": "Ты тренер навыков саморегуляции. Давай коротко, по делу."},
-                {"role": "user", "content": user_text},
-            ],
-            temperature=0.7,
-            max_tokens=120,
-        )
-        return (resp.choices[0].message.content or "").strip() or None
-    except Exception:
-        return None
-
-
 async def sync_user_summary_state(u: Dict[str, Any], last_event: Optional[str] = None):
     if last_event:
         u["last_event"] = last_event
@@ -484,7 +460,6 @@ async def main_flow(m: Message):
         "confirm_analysis",
         "analysis_more",
         "analysis_contract",
-        "analysis_map",
         "analysis_refine",
         "analysis_retry_await_clarification",
         "quick_diagnostic_start_hold",
@@ -496,7 +471,9 @@ async def main_flow(m: Message):
         "await_training_target",
         "skill_entry",
         "training",
+        "after_done",
         "training_skill_more",
+        "day1_started",
         "after_return_choice",
         "waiting_next_day",
         "crisis_choose_mode",
@@ -679,56 +656,6 @@ async def main_flow(m: Message):
 
         await m.answer(f"✅ Whisper:\n\n{t}")
         return
-
-
-    # ============================================================
-    # LIVE DIALOG PATTERN HOOK
-    # ============================================================
-    dialog_stages = {
-        "await_problem_text",
-        "analysis_refine",
-        "training",
-        "morning_checkin_custom",
-        "await_training_target",
-    }
-
-    if u.get("stage") in dialog_stages and text:
-        matched_intent = False
-
-        if "скуч" in low:
-            await m.answer(
-                trainer_say(
-                    u.get("trainer_key") or "marsha",
-                    "Скука = ты уже у входа.\n\n👉 Сделай 1 тупое действие и остановись.",
-                )
-            )
-            return
-
-        pattern = detect_dialog_pattern(text)
-
-        if u.get("stage") in {"await_problem_text", "analysis_refine"} and need_clarify(text):
-            await m.answer(clarify_question(u.get("mode") or "normal"))
-            return
-
-        if pattern and u.get("stage") in {"training", "await_problem_text", "analysis_refine"}:
-            reply = get_dialog_reply(
-                u.get("trainer_key") or "marsha",
-                u.get("mode") or "normal",
-                pattern,
-            )
-            if reply:
-                await m.answer(trainer_say(u.get("trainer_key") or "marsha", reply))
-                matched_intent = True
-
-                if pattern == "misunderstood":
-                    await m.answer(MISUNDERSTOOD_FALLBACK)
-                    return
-
-        if not matched_intent:
-            ai = await ai_fallback_answer(text)
-            if ai:
-                await m.answer(ai)
-                return
 
     # ask_name
     if u["stage"] == "ask_name":
@@ -952,13 +879,21 @@ async def main_flow(m: Message):
     if u.get("stage") == "analysis_contract":
         low = (text or "").lower().strip()
         if text == "📜 Принимаю контракт" or "принимаю" in low:
-            u["stage"] = "analysis_map"
+            u["day"] = 1
+            u["stage"] = "day1_started"
             await save_user(u, DB_PATH)
-            await m.answer(month_map_text(u.get("bucket")))
             await m.answer(
-                f"{guarantee_block(u.get('trainer_key'))}\n\nГотов(а) идти по этому плану?",
-                reply_markup=kb_analysis_map,
+                trainer_say(
+                    u.get("trainer_key") or "marsha",
+                    personal_route_text(
+                        u.get("name") or "друг",
+                        u.get("trainer_key") or "marsha",
+                        u.get("bucket") or "mixed",
+                    ),
+                )
             )
+            await track_user_event(u, "analysis", "day1_started")
+            await start_day(m, u, 1, DB_PATH, SHEETS_WEBHOOK_URL)
             return
         if text == "🤔 Немного не так" or "не так" in low:
             u["stage"] = "quick_diagnostic_start_hold"
@@ -966,30 +901,7 @@ async def main_flow(m: Message):
             await save_user(u, DB_PATH)
             await m.answer("Сложнее начать или удержаться потом?")
             return
-        if text == "ℹ️ Подробнее" or "подробнее" in low:
-            await m.answer(
-                contract_full_text(u.get("name") or "друг", u.get("trainer_key"), u.get("bucket")),
-                reply_markup=kb_analysis_contract,
-            )
-            return
         await m.answer("Давай спокойно выберем следующий шаг 👇", reply_markup=kb_analysis_contract)
-        return
-
-    # analysis_map
-    if u.get("stage") == "analysis_map":
-        low = (text or "").lower().strip()
-        if text == "📜 Принимаю план" or "принимаю" in low:
-            u["day"] = 1
-            await track_user_event(u, "analysis", "day1_started")
-            await start_day(m, u, 1, DB_PATH, SHEETS_WEBHOOK_URL)
-            return
-        if text == "🤔 Немного не так" or "не так" in low or low == "нет":
-            u["stage"] = "quick_diagnostic_start_hold"
-            reset_retry(u, "start_hold_retry")
-            await save_user(u, DB_PATH)
-            await m.answer("Сложнее начать или удержаться потом?")
-            return
-        await m.answer("Можно выбрать один из вариантов ниже 👇", reply_markup=kb_analysis_map)
         return
 
     # quick_diagnostic_start_hold
@@ -1158,32 +1070,13 @@ async def main_flow(m: Message):
         low = (text or "").lower().strip()
 
         mood_key = None
-        if text == "тревожно" or "трев" in low:
-            mood_key = "anxious"
-        elif text == "не хочу начинать" or ("не хочу" in low and "нач" in low):
-            mood_key = "resistant"
-        elif text == "пусто / нет сил" or "нет сил" in low or "пусто" in low:
-            mood_key = "empty"
-        elif text == "отвлекаюсь" or "отвлек" in low:
-            mood_key = "distracted"
-        elif text == "нормально, идём" or "нормально" in low:
+        if text == "😐 норм" or "норм" in low:
             mood_key = "ok"
-        elif text == "напишу сам":
-            u["stage"] = "morning_checkin_custom"
-            await save_user(u, DB_PATH)
-            await m.answer(
-                trainer_say(trainer_key, "Ок. Напиши коротко, что сейчас больше всего мешает войти в день."),
-                reply_markup=ReplyKeyboardMarkup(
-                    keyboard=[[KeyboardButton(text="тревожно"), KeyboardButton(text="не хочу начинать")],
-                              [KeyboardButton(text="пусто / нет сил"), KeyboardButton(text="отвлекаюсь")],
-                              [KeyboardButton(text="нормально, идём")]],
-                    resize_keyboard=True,
-                ),
-            )
-            return
+        elif text == "😣 тяжело" or "тяж" in low:
+            mood_key = "empty"
 
         if not mood_key:
-            await m.answer("Выбери вариант ниже или нажми 'напишу сам'.", reply_markup=kb_morning_checkin)
+            await m.answer("Выбери один вариант 👇", reply_markup=kb_morning_checkin)
             return
 
         u["stage"] = "await_training_target"
@@ -1327,13 +1220,15 @@ async def main_flow(m: Message):
             u["done_count"] = int(u.get("done_count") or 0) + 1
             gamify_apply(u, 1, "done")
             await track_user_event(u, "training", "done", {"day": u.get("day")})
+            u["stage"] = "after_done"
             await save_user(u, DB_PATH)
 
             await m.answer(
                 trainer_say(u.get("trainer_key") or "marsha", "Сделал. Факт есть. Это тренировка.")
             )
             await m.answer(
-                "Что ты почувствовал во время выполнения?"
+                "Оцени, как прошло.",
+                reply_markup=kb_after_done,
             )
             return
 
@@ -1361,6 +1256,25 @@ async def main_flow(m: Message):
             return
 
         await m.answer("Выбери кнопку 👇", reply_markup=kb_training_run)
+        return
+
+    if u.get("stage") == "after_done":
+        trainer_key = u.get("trainer_key") or "marsha"
+        if text == "🙂 Чуть легче":
+            reply = "Отлично. Закрепляем тем же шагом."
+        elif text == "😐 Скучно":
+            reply = "Скучно — нормально. Навык работает через повтор."
+        elif text == "😣 Тяжело":
+            reply = "Тяжело — ок. Оставляем минимум и повторяем."
+        elif text == "🤔 Не понял, зачем это":
+            reply = "Смысл в повторе: запуск становится легче от практики."
+        else:
+            await m.answer("Выбери вариант ниже 👇", reply_markup=kb_after_done)
+            return
+
+        u["stage"] = "after_return_choice"
+        await save_user(u, DB_PATH)
+        await m.answer(trainer_say(trainer_key, reply), reply_markup=kb_after_return)
         return
 
     if u.get("stage") == "training_skill_more":
