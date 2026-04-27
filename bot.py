@@ -466,7 +466,6 @@ async def main_flow(m: Message):
         "quick_diagnostic_emotional",
         "quick_diagnostic_distraction",
         "morning_checkin",
-        "morning_checkin_custom",
         "midday_checkin",
         "await_training_target",
         "skill_entry",
@@ -529,20 +528,19 @@ async def main_flow(m: Message):
     if u.get("stage") == "evening_close_wait":
         trainer_key = u.get("trainer_key") or "marsha"
         if not text:
-            await m.answer("Можно выбрать вариант кнопкой или написать одной фразой.", reply_markup=kb_evening_close)
-            return
-
-        if text == "✍️ Напишу сам":
-            await m.answer("Ок, напиши одной фразой.", reply_markup=kb_evening_close)
+            await m.answer("Выбери один вариант 👇", reply_markup=kb_evening_close)
             return
 
         mapped = text
-        if text == "✅ Что-то получилось":
-            mapped = "Что-то получилось хотя бы частично."
-        elif text == "🧱 Было тяжело":
-            mapped = "Сегодня было труднее всего удержаться и продолжать."
-        elif text == "↩️ Срывался(ась), но возвращался(ась)":
-            mapped = "Были срывы, но я возвращался(ась)."
+        if text == "👍 сделал":
+            mapped = "Сделал"
+        elif text == "😐 частично":
+            mapped = "Частично"
+        elif text == "❌ не сделал":
+            mapped = "Не сделал"
+        else:
+            await m.answer("Выбери один вариант 👇", reply_markup=kb_evening_close)
+            return
 
         await log_event(
             u["user_id"],
@@ -1085,19 +1083,6 @@ async def main_flow(m: Message):
         await ask_training_target(m)
         return
 
-    # morning_checkin_custom
-    if u.get("stage") == "morning_checkin_custom":
-        trainer_key = u.get("trainer_key") or "marsha"
-        if not text:
-            await m.answer("Напиши коротко: одной фразой.")
-            return
-
-        u["stage"] = "await_training_target"
-        await save_user(u, DB_PATH)
-        await m.answer(trainer_say(trainer_key, get_morning_checkin_ack(trainer_key, "custom")))
-        await ask_training_target(m)
-        return
-
     # Вопрос перед выдачей навыка
     if u.get("stage") == "await_training_target":
         raw_target = (text or "").strip()
@@ -1191,18 +1176,6 @@ async def main_flow(m: Message):
             await show_current_skill_training(m, u)
             return
 
-        if text == "ℹ️ Подробнее про навык":
-            sid = u.get("current_skill_id")
-            skill = SKILLS_DB.get(sid or "", {})
-            u["stage"] = "training_skill_more"
-            await save_user(u, DB_PATH)
-
-            await m.answer(
-                skill_detail_text(skill),
-                reply_markup=kb_skill_more,
-            )
-            return
-
         if text == "🆘 Кризис":
             u["stage"] = "crisis_choose_mode"
             await save_user(u, DB_PATH)
@@ -1290,7 +1263,9 @@ async def main_flow(m: Message):
             await m.answer("Ок. Возвращаемся.", reply_markup=kb_skill_entry)
             return
 
-        await m.answer("Выбери кнопку 👇", reply_markup=kb_skill_more)
+        u["stage"] = "after_return_choice"
+        await save_user(u, DB_PATH)
+        await m.answer(trainer_say(trainer_key, reply), reply_markup=kb_after_return)
         return
 
     if u.get("stage") == "after_return_choice":
@@ -1423,7 +1398,7 @@ async def main_flow(m: Message):
             await m.answer(" ", reply_markup=payment_inline_full(PAYMENT_URL_FULL))
             return
 
-        if text == "🤔 Пока нет":
+        if text in {"🤔 Пока нет", "🤔 Пока думаю"}:
             u["stage"] = "waiting_next_day"
             await save_user(u, DB_PATH)
             await m.answer(
@@ -1756,7 +1731,7 @@ async def background_ping(bot):
             # только если пользователь начинал тренировку, но сегодня не появлялся
             _REACTIVATION_STAGES = {
                 "training", "waiting_next_day", "morning_checkin",
-                "morning_checkin_custom", "await_training_target",
+                "await_training_target",
             }
             if (
                 int(u.get("has_started_training") or 0) == 1

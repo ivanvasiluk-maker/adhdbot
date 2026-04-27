@@ -428,8 +428,19 @@ def skill_card_text(skill: dict, trainer_key: str = "marsha") -> str:
 
 
 def skill_training_text(skill: dict, trainer_key: str = "marsha") -> str:
-    """Текст на экране активной тренировки текущего навыка."""
-    return skill_detail_text(skill)
+    """Строгий формат тренировки: только действие без объяснений."""
+    name = skill.get("name", "Навык")
+    _, step1, step2, step3, _, _ = _skill_format_parts(skill)
+
+    steps = [s for s in [step1, step2, step3] if s]
+    if not steps:
+        steps = [skill.get("micro") or skill.get("minimum") or "Открой задачу и сделай 2 минуты."]
+
+    lines = [f"🧩 Навык: {name}", "", "Сделай:"]
+    for idx, step in enumerate(steps[:3], start=1):
+        lines.append(f"{idx}. {step}")
+    lines.extend(["", "Все."])
+    return "\n".join(lines)
 
 # ============================================================
 # 3) KEYBOARDS
@@ -484,10 +495,9 @@ kb_morning_checkin = ReplyKeyboardMarkup(
 
 kb_evening_close = ReplyKeyboardMarkup(
     keyboard=[
-        [KeyboardButton(text="✅ Что-то получилось")],
-        [KeyboardButton(text="🧱 Было тяжело")],
-        [KeyboardButton(text="↩️ Срывался(ась), но возвращался(ась)")],
-        [KeyboardButton(text="✍️ Напишу сам")],
+        [KeyboardButton(text="👍 сделал")],
+        [KeyboardButton(text="😐 частично")],
+        [KeyboardButton(text="❌ не сделал")],
     ],
     resize_keyboard=True,
 )
@@ -817,14 +827,6 @@ kb_analysis_contract = ReplyKeyboardMarkup(
     resize_keyboard=True,
 )
 
-kb_analysis_map = ReplyKeyboardMarkup(
-    keyboard=[
-        [KeyboardButton(text="📜 Принимаю план")],
-        [KeyboardButton(text="🤔 Немного не так")],
-    ],
-    resize_keyboard=True,
-)
-
 # ============================================================
 # PATCH: Simplified 2-3 button navigation
 # ============================================================
@@ -906,14 +908,6 @@ kb_after_done = ReplyKeyboardMarkup(
         [KeyboardButton(text="😐 Скучно")],
         [KeyboardButton(text="😣 Тяжело")],
         [KeyboardButton(text="🤔 Не понял, зачем это")],
-    ],
-    resize_keyboard=True,
-)
-
-kb_skill_more = ReplyKeyboardMarkup(
-    keyboard=[
-        [KeyboardButton(text="💪 Давай тренировать навык")],
-        [KeyboardButton(text="⬅️ Назад")],
     ],
     resize_keyboard=True,
 )
@@ -1054,47 +1048,6 @@ def analysis_contract_short(name: str, trainer_key: str, bucket: str) -> str:
         f"{trainer_tone}\n\n"
         "Это решаемо.\n"
         "Но не за один день."
-    )
-
-
-def analysis_contract_long(name: str, trainer_key: str, bucket: str) -> str:
-    """Подробная версия контракта (по кнопке «Подробнее»)"""
-    trainer_finish = {
-        "marsha": "Даже если что-то не пойдёт — мы подстроим путь. Ты не останешься один.",
-        "skinny": "Если метод не сработает — заменим. Но ты дойдёшь.",
-        "beck": "Программа адаптируется под обратную связь. Это часть протокола.",
-    }[trainer_key]
-
-    return (
-        f"🔍 {name}, разложу по шагам:\n\n"
-        "1️⃣ Что происходит\n"
-        "Навыки саморегуляции сейчас не выдерживают нагрузку.\n\n"
-        "2️⃣ Почему так\n"
-        "Не из-за лени и не из-за воли — функции просто не натренированы.\n\n"
-        "3️⃣ Почему это решаемо\n"
-        "Эти навыки тренируются так же, как мышцы.\n\n"
-        "4️⃣ Как мы будем работать\n"
-        "Не мотивацией, а регулярными микро-тренировками.\n\n"
-        "5️⃣ Сроки\n"
-        "Первые изменения — через 2–3 недели.\n"
-        "Устойчивость — 4–8 недель.\n\n"
-        f"{trainer_finish}\n\n"
-        "Мы будем идти шаг за шагом."
-    )
-
-# Алиас для использования в bot.py
-contract_full_text = analysis_contract_long
-
-def month_map_text(bucket: str) -> str:
-    """Карта тренировки на месяц (показывается сразу после анализа)"""
-    return (
-        "🗺 КАРТА 4 НЕДЕЛЬ\n\n"
-        "1️⃣ Стабилизация — возврат и запуск\n"
-        "2️⃣ Работа с тревогой / вниманием\n"
-        "3️⃣ Работа с самокритикой\n"
-        "4️⃣ Удержание системы\n\n"
-        "Это не случайные упражнения.\n"
-        "Это последовательная перестройка.\n"
     )
 
 

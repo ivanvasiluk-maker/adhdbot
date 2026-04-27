@@ -796,20 +796,6 @@ def build_4_week_plan(track: str) -> list:
     skills_sorted = sorted(skills, key=lambda x: SKILLS_DB[x]["week"])
     return skills_sorted
 
-# PATCH 3 — Генерация карты месяца
-def generate_month_map(track: str) -> str:
-    weeks = {}
-    for sid, data in SKILLS_DB.items():
-        if data["track"] == track:
-            weeks.setdefault(data["week"], []).append(data["name"])
-    text = "🗺 План на 4 недели:\n\n"
-    for w in sorted(weeks.keys()):
-        text += f"Неделя {w}:\n"
-        for name in weeks[w]:
-            text += f"• {name}\n"
-        text += "\n"
-    return text
-
 # PATCH 4 — Override после кризиса (замена навыка)
 def suggest_alternative_skill(track: str, current_skill: str):
     alternatives = [k for k, v in SKILLS_DB.items() if v["track"] == track and k != current_skill]
