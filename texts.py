@@ -477,10 +477,7 @@ kb_yes_no = ReplyKeyboardMarkup(
 
 kb_morning_checkin = ReplyKeyboardMarkup(
     keyboard=[
-        [KeyboardButton(text="тревожно"), KeyboardButton(text="не хочу начинать")],
-        [KeyboardButton(text="пусто / нет сил"), KeyboardButton(text="отвлекаюсь")],
-        [KeyboardButton(text="нормально, идём")],
-        [KeyboardButton(text="напишу сам")],
+        [KeyboardButton(text="😐 норм"), KeyboardButton(text="😣 тяжело")],
     ],
     resize_keyboard=True,
 )
@@ -1214,26 +1211,7 @@ def build_payment_offer(user: dict) -> str:
 
 def morning_checkin_text(trainer_key: str, name: str = "ты") -> str:
     """Утренний check-in: как ты себя чувствуешь?"""
-    if trainer_key == "skinny":
-        return (
-            "Доброе утро.\n"
-            "Новый день.\n\n"
-            "Как ты себя сейчас чувствуешь?\n"
-            "Коротко: есть силы / тяжело / пусто / тревожно."
-        )
-    if trainer_key == "beck":
-        return (
-            "Доброе утро.\n\n"
-            "Перед стартом важно понять состояние.\n"
-            "Как ты себя сейчас чувствуешь?\n"
-            "Коротко, 1–2 слова."
-        )
-    return (
-        "Доброе утро.\n\n"
-        "Давай мягко начнём день.\n"
-        "Как ты себя сейчас чувствуешь?\n"
-        "Коротко: есть силы / тяжело / пусто / тревожно."
-    )
+    return "Доброе утро.\n\nКак ты сейчас?"
 
 
 def midday_ping(name: str, trainer_key: str) -> str:
