@@ -6,6 +6,13 @@ import random
 from datetime import datetime
 from aiogram.types import KeyboardButton, ReplyKeyboardMarkup, InlineKeyboardMarkup, InlineKeyboardButton
 
+# Совместимость деплоя: этот объект импортируется в некоторых версиях bot.py.
+kb_skill_more = InlineKeyboardMarkup(
+    inline_keyboard=[
+        [InlineKeyboardButton(text="Ещё навык", callback_data="skill_more")]
+    ]
+)
+
 # ============================================================
 # TRAINERS (стили)
 # ============================================================
