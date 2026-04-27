@@ -37,6 +37,10 @@ from texts import (
     resolve_bucket_from_test, create_test_question_keyboard,
     analysis_contract_short, personal_route_text,
     skill_explain, skill_card_text, skill_training_text, get_morning_checkin_ack,
+    kb_skill_entry, kb_training_run, kb_skill_more, kb_after_return, kb_after_done, kb_pay_simple,
+    resolve_bucket_from_test, create_test_question_keyboard,
+    analysis_contract_short, personal_route_text,
+    skill_explain, skill_detail_text, skill_card_text, skill_training_text, get_morning_checkin_ack,
     daytime_ping, evening_close_question, evening_close_coach_reply, kb_evening_close,
     reactivation_6h, reactivation_24h, reactivation_3d, reactivation_7d, kb_reactivation,
     reactivation_soft_return, kb_soft_return,
@@ -487,6 +491,7 @@ async def main_flow(m: Message):
         "skill_entry",
         "training",
         "after_done",
+        "training_skill_more",
         "day1_started",
         "after_return_choice",
         "waiting_next_day",
@@ -1258,6 +1263,24 @@ async def main_flow(m: Message):
             reply = "Смысл в повторе: запуск становится легче от практики."
         else:
             await m.answer("Выбери вариант ниже 👇", reply_markup=kb_after_done)
+            return
+
+        u["stage"] = "after_return_choice"
+        await save_user(u, DB_PATH)
+        await m.answer(trainer_say(trainer_key, reply), reply_markup=kb_after_return)
+        return
+
+    if u.get("stage") == "training_skill_more":
+        low = (text or "").lower().strip()
+
+        if text == "💪 Давай тренировать навык":
+            await show_current_skill_training(m, u)
+            return
+
+        if text == "⬅️ Назад" or "назад" in low:
+            u["stage"] = "skill_entry"
+            await save_user(u, DB_PATH)
+            await m.answer("Ок. Возвращаемся.", reply_markup=kb_skill_entry)
             return
 
         u["stage"] = "after_return_choice"
