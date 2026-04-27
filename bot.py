@@ -14,6 +14,7 @@ import json
 import time
 import asyncio
 import logging
+import subprocess
 from datetime import datetime
 from typing import Dict, Any, Optional
 
@@ -32,6 +33,10 @@ from texts import (
     kb_crisis_mode, kb_analysis_confirm, kb_analysis_contract,
     kb_morning_checkin,
     payment_inline_full,
+    kb_skill_entry, kb_training_run, kb_after_return, kb_after_done, kb_pay_simple,
+    resolve_bucket_from_test, create_test_question_keyboard,
+    analysis_contract_short, personal_route_text,
+    skill_explain, skill_card_text, skill_training_text, get_morning_checkin_ack,
     kb_skill_entry, kb_training_run, kb_skill_more, kb_after_return, kb_after_done, kb_pay_simple,
     resolve_bucket_from_test, create_test_question_keyboard,
     analysis_contract_short, personal_route_text,
@@ -86,7 +91,22 @@ from nlp_fallback import (
 logging.basicConfig(level=logging.INFO)
 log = logging.getLogger("bot")
 
-APP_VERSION = "2026-03-28-v3"
+def detect_build_ref() -> str:
+    env_ref = (
+        os.getenv("RAILWAY_GIT_COMMIT_SHA")
+        or os.getenv("RENDER_GIT_COMMIT")
+        or os.getenv("VERCEL_GIT_COMMIT_SHA")
+        or ""
+    ).strip()
+    if env_ref:
+        return env_ref[:12]
+    try:
+        return subprocess.check_output(["git", "rev-parse", "--short", "HEAD"], text=True).strip()
+    except Exception:
+        return "unknown"
+
+
+APP_VERSION = f"2026-04-27-{detect_build_ref()}"
 
 BOT_TOKEN = (os.getenv("BOT_TOKEN") or "").strip()
 OPENAI_API_KEY = (os.getenv("OPENAI_API_KEY") or "").strip()
