@@ -13,13 +13,6 @@ kb_skill_more = InlineKeyboardMarkup(
     ]
 )
 
-
-def __getattr__(name: str):
-    # Защита от падения при from texts import kb_skill_more в старых сборках.
-    if name == "kb_skill_more":
-        return kb_skill_more
-    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
-
 # ============================================================
 # TRAINERS (стили)
 # ============================================================
@@ -859,6 +852,12 @@ kb_training_run = ReplyKeyboardMarkup(
         [KeyboardButton(text="📊 Мой прогресс"), KeyboardButton(text="🆘 Кризис")],
     ],
     resize_keyboard=True,
+)
+
+kb_skill_more = InlineKeyboardMarkup(
+    inline_keyboard=[
+        [InlineKeyboardButton(text="Ещё навык", callback_data="skill_more")]
+    ]
 )
 
 kb_progress_only = ReplyKeyboardMarkup(
