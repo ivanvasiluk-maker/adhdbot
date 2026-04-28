@@ -17,6 +17,7 @@ import logging
 import subprocess
 from datetime import datetime
 from typing import Dict, Any, Optional
+from pathlib import Path
 
 import aiosqlite
 from aiogram import Bot, Dispatcher, Router, F
@@ -80,6 +81,12 @@ from nlp_fallback import (
     anti_dead_end_reply,
     parse_tiny_reply,
 )
+from skiller_runtime import SKILLER_STATES, init_skiller_user, process_skiller_text, make_keyboard
+from events import log_event as log_event_v2
+from sheets_sync import sync_unsynced_events
+from admin import is_admin, build_stats_text
+from prompts import get_analyze_state_prompt, get_select_skill_prompt, get_crisis_check_prompt
+from gpt_client import extract_json_or_none
 
 # ============================================================
 # CONFIG
@@ -166,6 +173,9 @@ print(f"DB_PATH: {DB_PATH}")
 print(f"AI_ANALYSIS_ENABLED: {AI_ANALYSIS_ENABLED}")
 print(f"OPENAI_CHAT_MODEL: {OPENAI_CHAT_MODEL}")
 print(f"OPENAI_WHISPER_MODEL: {OPENAI_WHISPER_MODEL}")
+
+with open(Path(__file__).with_name("skills.json"), "r", encoding="utf-8") as _f:
+    SKILLS_JSON = json.load(_f)
 
 
 def payments_enabled() -> bool:
@@ -403,23 +413,50 @@ async def sheets_test(m: Message):
     await m.answer("Ок. Отправил тест в Google Sheets. Проверь events и users_summary.")
 
 
-@router.message(CommandStart())
-async def cmd_start(m: Message):
+@router.message(Command("health"))
+async def health_cmd(m: Message):
+    await m.answer("ok")
+
+
+@router.message(Command("stats"))
+async def stats_cmd(m: Message):
     uid = m.from_user.id
-    u = await get_user(uid, DB_PATH)
-    u["chat_id"] = m.chat.id
-    u["username"] = m.from_user.username or ""
+    if not is_admin(uid):
+        await m.answer("⛔ Нет доступа.")
+        return
+    text = await build_stats_text(DB_PATH)
+    await m.answer(text)
 
 
-    u["stage"] = "ask_name"
-    await track_user_event(u, "onboarding", "onboarding_started")
+@router.message(Command("skiller_start"))
+async def skiller_start_cmd(m: Message):
+    u = await get_user(m.from_user.id, DB_PATH)
+    u = init_skiller_user(u)
     await save_user(u, DB_PATH)
     await m.answer(
-        "Привет. Я тренер навыков саморегуляции.\n\n"
-        "Я не лечу и не ставлю диагнозы.\n"
-        "Я помогаю запускать действия, когда не получается.\n\n"
-        "Как тебя зовут? (1 слово)",
-        reply_markup=ReplyKeyboardMarkup(keyboard=[[KeyboardButton(text="Пропустить")]], resize_keyboard=True),
+        "Что сейчас мешает больше всего?",
+        reply_markup=ReplyKeyboardMarkup(
+            keyboard=[[KeyboardButton(text="Не могу начать"), KeyboardButton(text="Залипаю"), KeyboardButton(text="Перегруз")]],
+            resize_keyboard=True,
+        ),
+    )
+
+
+@router.message(CommandStart())
+async def cmd_start(m: Message):
+    u = await get_user(m.from_user.id, DB_PATH)
+    u["chat_id"] = m.chat.id
+    u["username"] = m.from_user.username or ""
+    u = init_skiller_user(u)
+    await save_user(u, DB_PATH)
+    await log_event_v2(u["user_id"], "start", {"source": "/start"}, DB_PATH)
+    await log_event_v2(u["user_id"], "onboarding_started", {}, DB_PATH)
+    await m.answer(
+        "Что сейчас мешает больше всего?",
+        reply_markup=ReplyKeyboardMarkup(
+            keyboard=[[KeyboardButton(text="Не могу начать"), KeyboardButton(text="Залипаю"), KeyboardButton(text="Перегруз")]],
+            resize_keyboard=True,
+        ),
     )
 
 
@@ -456,12 +493,217 @@ async def show_current_skill_training(m: Message, u: Dict[str, Any]):
     )
 
 
+async def persist_skiller_user_state(user_id: int, user_state_update: dict):
+    if not user_state_update:
+        return
+    now_s = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    async with aiosqlite.connect(DB_PATH) as db:
+        await db.execute(
+            """
+            INSERT INTO user_state(user_id, sleep, anxiety, energy, updated_at)
+            VALUES(?,?,?,?,?)
+            ON CONFLICT(user_id) DO UPDATE SET
+                sleep=COALESCE(excluded.sleep, sleep),
+                anxiety=COALESCE(excluded.anxiety, anxiety),
+                energy=COALESCE(excluded.energy, energy),
+                updated_at=excluded.updated_at
+            """,
+            (
+                user_id,
+                user_state_update.get("sleep"),
+                user_state_update.get("anxiety"),
+                user_state_update.get("energy"),
+                now_s,
+            ),
+        )
+        await db.commit()
+
+
+async def persist_skiller_analysis(user_id: int, ai: dict):
+    if not ai:
+        return
+    now_s = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    async with aiosqlite.connect(DB_PATH) as db:
+        await db.execute(
+            """
+            INSERT INTO user_state(
+                user_id, problem, emotion, pattern, energy, current_task, updated_at
+            ) VALUES(?,?,?,?,?,?,?)
+            ON CONFLICT(user_id) DO UPDATE SET
+                problem=excluded.problem,
+                emotion=excluded.emotion,
+                pattern=excluded.pattern,
+                energy=excluded.energy,
+                current_task=COALESCE(excluded.current_task, current_task),
+                updated_at=excluded.updated_at
+            """,
+            (
+                user_id,
+                ai.get("problem"),
+                ai.get("emotion"),
+                ai.get("pattern"),
+                ai.get("energy"),
+                ai.get("skill"),
+                now_s,
+            ),
+        )
+        cur = await db.execute(
+            """
+            UPDATE patterns
+            SET count = count + 1,
+                emotion = ?,
+                successful_skill = COALESCE(?, successful_skill),
+                last_seen = ?
+            WHERE user_id = ? AND pattern = ?
+            """,
+            (
+                ai.get("emotion"),
+                ai.get("skill"),
+                now_s,
+                user_id,
+                ai.get("pattern"),
+            ),
+        )
+        if (cur.rowcount or 0) == 0:
+            await db.execute(
+            """
+            INSERT INTO patterns(
+                user_id, pattern, trigger, emotion, successful_skill, failed_skill, count, last_seen
+            ) VALUES(?,?,?,?,?,?,1,?)
+            """,
+            (
+                user_id,
+                ai.get("pattern"),
+                ai.get("problem"),
+                ai.get("emotion"),
+                ai.get("skill"),
+                None,
+                now_s,
+            ),
+            )
+        await db.commit()
+
+
+async def skiller_ai_analyze(user_text: str, u: dict) -> dict | None:
+    if not (AI_ANALYSIS_ENABLED and client):
+        return None
+    try:
+        prompt = get_analyze_state_prompt(user_text, current_state={"mode": u.get("current_mode"), "day": u.get("current_day")})
+        resp = client.chat.completions.create(
+            model=OPENAI_CHAT_MODEL,
+            messages=[{"role": "system", "content": "Return only JSON."}, {"role": "user", "content": prompt}],
+            temperature=0.2,
+            max_tokens=500,
+        )
+        text = resp.choices[0].message.content if resp.choices else ""
+        return extract_json_or_none(text)
+    except Exception:
+        log.exception("skiller_ai_analyze failed")
+        return None
+
+
+async def skiller_ai_select_skill(u: dict) -> str | None:
+    if not (AI_ANALYSIS_ENABLED and client):
+        return None
+    try:
+        pattern = (u.get("skiller_pattern") or "initiation_failure")
+        energy = (u.get("skiller_energy") or "unknown")
+        available = list(SKILLS_JSON.keys())
+        prompt = get_select_skill_prompt(pattern=pattern, energy=energy, available_skills=available)
+        resp = client.chat.completions.create(
+            model=OPENAI_CHAT_MODEL,
+            messages=[{"role": "system", "content": "Return only JSON."}, {"role": "user", "content": prompt}],
+            temperature=0.1,
+            max_tokens=120,
+        )
+        text = resp.choices[0].message.content if resp.choices else ""
+        data = extract_json_or_none(text) or {}
+        sid = (data.get("skill") or "").strip()
+        return sid if sid in SKILLS_JSON else None
+    except Exception:
+        log.exception("skiller_ai_select_skill failed")
+        return None
+
+
+async def skiller_ai_crisis(user_text: str) -> bool:
+    if not (AI_ANALYSIS_ENABLED and client):
+        return False
+    try:
+        prompt = get_crisis_check_prompt(user_text)
+        resp = client.chat.completions.create(
+            model=OPENAI_CHAT_MODEL,
+            messages=[{"role": "system", "content": "Return only JSON."}, {"role": "user", "content": prompt}],
+            temperature=0.0,
+            max_tokens=100,
+        )
+        text = resp.choices[0].message.content if resp.choices else ""
+        data = extract_json_or_none(text) or {}
+        return bool(data.get("crisis"))
+    except Exception:
+        log.exception("skiller_ai_crisis failed")
+        return False
+
+
 @router.message()
 async def main_flow(m: Message):
     uid = m.from_user.id
     u = await get_user(uid, DB_PATH)
     text = (m.text or "").strip()
     low = text.lower()
+
+    if u.get("current_mode") in SKILLER_STATES:
+        if await skiller_ai_crisis(text):
+            result = process_skiller_text(u, "кризис")
+            await save_user(u, DB_PATH)
+            await log_event_v2(u["user_id"], "crisis_clicked", {"source": "ai_crisis_check"}, DB_PATH)
+            await m.answer(result.get("text"), reply_markup=ReplyKeyboardMarkup(
+                keyboard=[[KeyboardButton(text=b) for b in row] for row in make_keyboard(result.get("buttons") or [])],
+                resize_keyboard=True,
+            ))
+            return
+
+        if u.get("current_mode") == "analysis":
+            await log_event_v2(u["user_id"], "first_text_sent", {"len": len(text or "")}, DB_PATH)
+            ai = await skiller_ai_analyze(text, u)
+            if ai:
+                u["skiller_pattern"] = ai.get("pattern") or ""
+                u["skiller_energy"] = ai.get("energy") or "unknown"
+                if ai.get("skill"):
+                    u["current_skill"] = ai.get("skill")
+                u["current_mode"] = "details"
+                await save_user(u, DB_PATH)
+                await persist_skiller_analysis(u["user_id"], ai)
+                await log_event_v2(u["user_id"], "analysis_shown", {"mode": "analysis", "risk": ai.get("risk")}, DB_PATH)
+                await m.answer(ai.get("short_analysis") or "Есть паттерн входа. Двигаемся шагами.", reply_markup=ReplyKeyboardMarkup(
+                    keyboard=[[KeyboardButton(text="Подробнее"), KeyboardButton(text="Давай действие")]],
+                    resize_keyboard=True,
+                ))
+                return
+
+        if u.get("current_mode") in {"details", "action"} and text.lower() in {"давай действие", "действие"}:
+            sid = await skiller_ai_select_skill(u)
+            if sid:
+                u["current_skill"] = sid
+                await save_user(u, DB_PATH)
+                await log_event_v2(u["user_id"], "skill_selected", {"skill": sid}, DB_PATH)
+
+        result = process_skiller_text(u, text)
+        await save_user(u, DB_PATH)
+        await persist_skiller_user_state(u["user_id"], result.get("user_state_update") or {})
+        event_name = result.get("event")
+        if event_name:
+            await log_event_v2(u["user_id"], event_name, {"mode": u.get("current_mode")}, DB_PATH)
+        buttons = result.get("buttons") or []
+        markup = (
+            ReplyKeyboardMarkup(
+                keyboard=[[KeyboardButton(text=b) for b in row] for row in make_keyboard(buttons)],
+                resize_keyboard=True,
+            )
+            if buttons
+            else None
+        )
+        await m.answer(result.get("text") or "Ок.", reply_markup=markup)
+        return
 
     KNOWN_STAGES = {
         "ask_name",
@@ -1982,6 +2224,15 @@ async def background_ping(bot):
 
         await asyncio.sleep(3600)
 
+
+async def background_sheets_sync():
+    while True:
+        try:
+            await sync_unsynced_events(db_path=DB_PATH, batch_size=50, webhook_url=SHEETS_WEBHOOK_URL)
+        except Exception:
+            log.exception("background_sheets_sync failed")
+        await asyncio.sleep(45)
+
 # ============================================================
 # MAIN
 # ============================================================
@@ -1996,6 +2247,7 @@ async def main():
         await init_db(DB_PATH)
         await migrate_db(DB_PATH)
         asyncio.create_task(background_ping(bot))
+        asyncio.create_task(background_sheets_sync())
         log.info("Bot started")
         await dp.start_polling(bot)
     except asyncio.exceptions.CancelledError:

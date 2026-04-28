@@ -66,6 +66,17 @@ USER_FIELDS = [
     "last_sleep",
     "last_anxiety",
     "last_energy",
+    "current_day",
+    "current_mode",
+    "current_skill",
+    "trainer_style",
+    "onboarding_completed",
+    "today_checkin_done",
+    "today_skill_done",
+    "last_greeting_date",
+    "free_mode",
+    "feedback",
+    "preferred_depth",
 ]
 
 def default_user(uid: int) -> Dict[str, Any]:
@@ -117,6 +128,17 @@ def default_user(uid: int) -> Dict[str, Any]:
         "last_sleep": "",
         "last_anxiety": "",
         "last_energy": "",
+        "current_day": 1,
+        "current_mode": "onboarding",
+        "current_skill": "",
+        "trainer_style": "beck",
+        "onboarding_completed": 0,
+        "today_checkin_done": 0,
+        "today_skill_done": 0,
+        "last_greeting_date": "",
+        "free_mode": 0,
+        "feedback": "",
+        "preferred_depth": "",
     }
 
 async def init_db(db_path: str):
@@ -171,6 +193,49 @@ async def init_db(db_path: str):
                 ,last_sleep TEXT
                 ,last_anxiety TEXT
                 ,last_energy TEXT
+                ,current_day INTEGER DEFAULT 1
+                ,current_mode TEXT DEFAULT 'onboarding'
+                ,current_skill TEXT
+                ,trainer_style TEXT DEFAULT 'beck'
+                ,onboarding_completed INTEGER DEFAULT 0
+                ,today_checkin_done INTEGER DEFAULT 0
+                ,today_skill_done INTEGER DEFAULT 0
+                ,last_greeting_date TEXT
+                ,free_mode INTEGER DEFAULT 0
+                ,feedback TEXT
+                ,preferred_depth TEXT
+            )
+            """
+        )
+        await db.execute(
+            """
+            CREATE TABLE IF NOT EXISTS user_state (
+                user_id INTEGER PRIMARY KEY,
+                problem TEXT,
+                emotion TEXT,
+                pattern TEXT,
+                energy TEXT,
+                anxiety TEXT,
+                sleep TEXT,
+                current_task TEXT,
+                loop_status TEXT,
+                expected_reply TEXT,
+                updated_at TEXT
+            )
+            """
+        )
+        await db.execute(
+            """
+            CREATE TABLE IF NOT EXISTS patterns (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                user_id INTEGER,
+                pattern TEXT,
+                trigger TEXT,
+                emotion TEXT,
+                successful_skill TEXT,
+                failed_skill TEXT,
+                count INTEGER DEFAULT 1,
+                last_seen TEXT
             )
             """
         )
@@ -266,6 +331,17 @@ EXTRA_USER_COLS = {
     "last_sleep": "TEXT",
     "last_anxiety": "TEXT",
     "last_energy": "TEXT",
+    "current_day": "INTEGER",
+    "current_mode": "TEXT",
+    "current_skill": "TEXT",
+    "trainer_style": "TEXT",
+    "onboarding_completed": "INTEGER",
+    "today_checkin_done": "INTEGER",
+    "today_skill_done": "INTEGER",
+    "last_greeting_date": "TEXT",
+    "free_mode": "INTEGER",
+    "feedback": "TEXT",
+    "preferred_depth": "TEXT",
 }
 
 async def migrate_db(db_path: str):
@@ -288,6 +364,50 @@ async def migrate_db(db_path: str):
             meta TEXT
         )
         """)
+        cur = await db.execute("PRAGMA table_info(events)")
+        event_cols = [r[1] for r in await cur.fetchall()]
+        event_extra_cols = {
+            "event_name": "TEXT",
+            "event_data": "TEXT",
+            "created_at": "TEXT",
+            "synced": "INTEGER DEFAULT 0",
+        }
+        for col, ctype in event_extra_cols.items():
+            if col not in event_cols:
+                await db.execute(f"ALTER TABLE events ADD COLUMN {col} {ctype}")
+
+        await db.execute(
+            """
+            CREATE TABLE IF NOT EXISTS user_state (
+                user_id INTEGER PRIMARY KEY,
+                problem TEXT,
+                emotion TEXT,
+                pattern TEXT,
+                energy TEXT,
+                anxiety TEXT,
+                sleep TEXT,
+                current_task TEXT,
+                loop_status TEXT,
+                expected_reply TEXT,
+                updated_at TEXT
+            )
+            """
+        )
+        await db.execute(
+            """
+            CREATE TABLE IF NOT EXISTS patterns (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                user_id INTEGER,
+                pattern TEXT,
+                trigger TEXT,
+                emotion TEXT,
+                successful_skill TEXT,
+                failed_skill TEXT,
+                count INTEGER DEFAULT 1,
+                last_seen TEXT
+            )
+            """
+        )
         await db.commit()
 
 def compute_stuck_flag(u: dict) -> str:
@@ -378,8 +498,17 @@ async def log_event(
     ts = time.time()
     async with aiosqlite.connect(db_path) as db:
         await db.execute(
-            "INSERT INTO events(ts,user_id,stage,event,meta) VALUES(?,?,?,?,?)",
-            (ts, user_id, stage, event, meta_s)
+            "INSERT INTO events(ts,user_id,stage,event,meta,event_name,event_data,created_at,synced) VALUES(?,?,?,?,?,?,?,?,0)",
+            (
+                ts,
+                user_id,
+                stage,
+                event,
+                meta_s,
+                event,
+                meta_s,
+                time.strftime("%Y-%m-%d %H:%M:%S"),
+            ),
         )
         await db.commit()
 

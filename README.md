@@ -62,6 +62,14 @@ docker run --env-file .env adhd-bot
 - [texts.py](texts.py): trainer texts, keyboards, and constants.
 - [skills.py](skills.py): skill catalog and plan builders.
 - [db.py](db.py): SQLite helpers and migrations.
+- [state_machine.py](state_machine.py): explicit behavioral states and transitions.
+- [templates.py](templates.py): UI text templates for short scripted loop responses.
+- [prompts.py](prompts.py): GPT prompts for analysis, skill selection, and crisis checks.
+- [events.py](events.py): safe event logger with non-breaking writes.
+- [sheets_sync.py](sheets_sync.py): background sync of unsynced events batches.
+- [payments.py](payments.py): MVP payment stub handlers.
+- [admin.py](admin.py): `/stats` aggregation helpers with ADMIN_IDS access gate.
+- [skills.json](skills.json): normalized skill catalog for one-skill-per-day logic.
 
 ## Troubleshooting
 - If `BOT_TOKEN` is missing, startup raises a runtime error.
