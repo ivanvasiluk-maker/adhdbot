@@ -1,0 +1,695 @@
+{
+  "two_min_start": {
+    "title": "2 минуты старта",
+    "category": "start",
+    "patterns": [
+      "initiation_failure",
+      "avoidance",
+      "overwhelm"
+    ],
+    "energy": [
+      "low",
+      "medium"
+    ],
+    "why": "Навык снижает порог входа в задачу. Цель — не результат, а запуск.",
+    "steps": [
+      "Открой задачу",
+      "Сделай самый тупой первый шаг",
+      "Остановись через 2 минуты"
+    ],
+    "downscale": "Просто открой задачу и посмотри на неё 30 секунд.",
+    "success_question": "Что стало легче после старта?"
+  },
+  "ninety_sec_start": {
+    "title": "Ninety Sec Start",
+    "category": "action",
+    "patterns": [
+      "initiation_failure",
+      "avoidance"
+    ],
+    "energy": [
+      "low",
+      "medium",
+      "high"
+    ],
+    "why": "Навык снижает сопротивление и переводит состояние в действие.",
+    "steps": [
+      "Открой задачу",
+      "Сделай один микрошаг",
+      "Вернись в бот"
+    ],
+    "downscale": "Просто открой задачу и смотри на неё 30 секунд.",
+    "success_question": "Что стало легче после шага?"
+  },
+  "open_only": {
+    "title": "Open Only",
+    "category": "action",
+    "patterns": [
+      "initiation_failure",
+      "avoidance"
+    ],
+    "energy": [
+      "low",
+      "medium",
+      "high"
+    ],
+    "why": "Навык снижает сопротивление и переводит состояние в действие.",
+    "steps": [
+      "Открой задачу",
+      "Сделай один микрошаг",
+      "Вернись в бот"
+    ],
+    "downscale": "Просто открой задачу и смотри на неё 30 секунд.",
+    "success_question": "Что стало легче после шага?"
+  },
+  "bad_first_step": {
+    "title": "Bad First Step",
+    "category": "action",
+    "patterns": [
+      "initiation_failure",
+      "avoidance"
+    ],
+    "energy": [
+      "low",
+      "medium",
+      "high"
+    ],
+    "why": "Навык снижает сопротивление и переводит состояние в действие.",
+    "steps": [
+      "Открой задачу",
+      "Сделай один микрошаг",
+      "Вернись в бот"
+    ],
+    "downscale": "Просто открой задачу и смотри на неё 30 секунд.",
+    "success_question": "Что стало легче после шага?"
+  },
+  "task_naming": {
+    "title": "Task Naming",
+    "category": "action",
+    "patterns": [
+      "initiation_failure",
+      "avoidance"
+    ],
+    "energy": [
+      "low",
+      "medium",
+      "high"
+    ],
+    "why": "Навык снижает сопротивление и переводит состояние в действие.",
+    "steps": [
+      "Открой задачу",
+      "Сделай один микрошаг",
+      "Вернись в бот"
+    ],
+    "downscale": "Просто открой задачу и смотри на неё 30 секунд.",
+    "success_question": "Что стало легче после шага?"
+  },
+  "next_physical_action": {
+    "title": "Next Physical Action",
+    "category": "action",
+    "patterns": [
+      "initiation_failure",
+      "avoidance"
+    ],
+    "energy": [
+      "low",
+      "medium",
+      "high"
+    ],
+    "why": "Навык снижает сопротивление и переводит состояние в действие.",
+    "steps": [
+      "Открой задачу",
+      "Сделай один микрошаг",
+      "Вернись в бот"
+    ],
+    "downscale": "Просто открой задачу и смотри на неё 30 секунд.",
+    "success_question": "Что стало легче после шага?"
+  },
+  "two_by_two": {
+    "title": "Two By Two",
+    "category": "action",
+    "patterns": [
+      "initiation_failure",
+      "avoidance"
+    ],
+    "energy": [
+      "low",
+      "medium",
+      "high"
+    ],
+    "why": "Навык снижает сопротивление и переводит состояние в действие.",
+    "steps": [
+      "Открой задачу",
+      "Сделай один микрошаг",
+      "Вернись в бот"
+    ],
+    "downscale": "Просто открой задачу и смотри на неё 30 секунд.",
+    "success_question": "Что стало легче после шага?"
+  },
+  "restart_after_break": {
+    "title": "Restart After Break",
+    "category": "action",
+    "patterns": [
+      "initiation_failure",
+      "avoidance"
+    ],
+    "energy": [
+      "low",
+      "medium",
+      "high"
+    ],
+    "why": "Навык снижает сопротивление и переводит состояние в действие.",
+    "steps": [
+      "Открой задачу",
+      "Сделай один микрошаг",
+      "Вернись в бот"
+    ],
+    "downscale": "Просто открой задачу и смотри на неё 30 секунд.",
+    "success_question": "Что стало легче после шага?"
+  },
+  "one_tab_focus": {
+    "title": "One Tab Focus",
+    "category": "action",
+    "patterns": [
+      "initiation_failure",
+      "avoidance"
+    ],
+    "energy": [
+      "low",
+      "medium",
+      "high"
+    ],
+    "why": "Навык снижает сопротивление и переводит состояние в действие.",
+    "steps": [
+      "Открой задачу",
+      "Сделай один микрошаг",
+      "Вернись в бот"
+    ],
+    "downscale": "Просто открой задачу и смотри на неё 30 секунд.",
+    "success_question": "Что стало легче после шага?"
+  },
+  "five_min_container": {
+    "title": "Five Min Container",
+    "category": "action",
+    "patterns": [
+      "initiation_failure",
+      "avoidance"
+    ],
+    "energy": [
+      "low",
+      "medium",
+      "high"
+    ],
+    "why": "Навык снижает сопротивление и переводит состояние в действие.",
+    "steps": [
+      "Открой задачу",
+      "Сделай один микрошаг",
+      "Вернись в бот"
+    ],
+    "downscale": "Просто открой задачу и смотри на неё 30 секунд.",
+    "success_question": "Что стало легче после шага?"
+  },
+  "anti_scroll_interrupt": {
+    "title": "Anti Scroll Interrupt",
+    "category": "action",
+    "patterns": [
+      "initiation_failure",
+      "avoidance"
+    ],
+    "energy": [
+      "low",
+      "medium",
+      "high"
+    ],
+    "why": "Навык снижает сопротивление и переводит состояние в действие.",
+    "steps": [
+      "Открой задачу",
+      "Сделай один микрошаг",
+      "Вернись в бот"
+    ],
+    "downscale": "Просто открой задачу и смотри на неё 30 секунд.",
+    "success_question": "Что стало легче после шага?"
+  },
+  "urge_surf_60": {
+    "title": "Urge Surf 60",
+    "category": "action",
+    "patterns": [
+      "initiation_failure",
+      "avoidance"
+    ],
+    "energy": [
+      "low",
+      "medium",
+      "high"
+    ],
+    "why": "Навык снижает сопротивление и переводит состояние в действие.",
+    "steps": [
+      "Открой задачу",
+      "Сделай один микрошаг",
+      "Вернись в бот"
+    ],
+    "downscale": "Просто открой задачу и смотри на неё 30 секунд.",
+    "success_question": "Что стало легче после шага?"
+  },
+  "body_reset": {
+    "title": "Body Reset",
+    "category": "action",
+    "patterns": [
+      "initiation_failure",
+      "avoidance"
+    ],
+    "energy": [
+      "low",
+      "medium",
+      "high"
+    ],
+    "why": "Навык снижает сопротивление и переводит состояние в действие.",
+    "steps": [
+      "Открой задачу",
+      "Сделай один микрошаг",
+      "Вернись в бот"
+    ],
+    "downscale": "Просто открой задачу и смотри на неё 30 секунд.",
+    "success_question": "Что стало легче после шага?"
+  },
+  "breathing_4_6": {
+    "title": "Breathing 4 6",
+    "category": "regulation",
+    "patterns": [
+      "initiation_failure",
+      "avoidance"
+    ],
+    "energy": [
+      "low",
+      "medium",
+      "high"
+    ],
+    "why": "Навык снижает сопротивление и переводит состояние в действие.",
+    "steps": [
+      "Открой задачу",
+      "Сделай один микрошаг",
+      "Вернись в бот"
+    ],
+    "downscale": "Просто открой задачу и смотри на неё 30 секунд.",
+    "success_question": "Что стало легче после шага?"
+  },
+  "name_the_state": {
+    "title": "Name The State",
+    "category": "action",
+    "patterns": [
+      "initiation_failure",
+      "avoidance"
+    ],
+    "energy": [
+      "low",
+      "medium",
+      "high"
+    ],
+    "why": "Навык снижает сопротивление и переводит состояние в действие.",
+    "steps": [
+      "Открой задачу",
+      "Сделай один микрошаг",
+      "Вернись в бот"
+    ],
+    "downscale": "Просто открой задачу и смотри на неё 30 секунд.",
+    "success_question": "Что стало легче после шага?"
+  },
+  "self_criticism_to_instruction": {
+    "title": "Self Criticism To Instruction",
+    "category": "action",
+    "patterns": [
+      "initiation_failure",
+      "avoidance"
+    ],
+    "energy": [
+      "low",
+      "medium",
+      "high"
+    ],
+    "why": "Навык снижает сопротивление и переводит состояние в действие.",
+    "steps": [
+      "Открой задачу",
+      "Сделай один микрошаг",
+      "Вернись в бот"
+    ],
+    "downscale": "Просто открой задачу и смотри на неё 30 секунд.",
+    "success_question": "Что стало легче после шага?"
+  },
+  "thought_labeling": {
+    "title": "Thought Labeling",
+    "category": "action",
+    "patterns": [
+      "initiation_failure",
+      "avoidance"
+    ],
+    "energy": [
+      "low",
+      "medium",
+      "high"
+    ],
+    "why": "Навык снижает сопротивление и переводит состояние в действие.",
+    "steps": [
+      "Открой задачу",
+      "Сделай один микрошаг",
+      "Вернись в бот"
+    ],
+    "downscale": "Просто открой задачу и смотри на неё 30 секунд.",
+    "success_question": "Что стало легче после шага?"
+  },
+  "catastrophe_to_plan": {
+    "title": "Catastrophe To Plan",
+    "category": "action",
+    "patterns": [
+      "initiation_failure",
+      "avoidance"
+    ],
+    "energy": [
+      "low",
+      "medium",
+      "high"
+    ],
+    "why": "Навык снижает сопротивление и переводит состояние в действие.",
+    "steps": [
+      "Открой задачу",
+      "Сделай один микрошаг",
+      "Вернись в бот"
+    ],
+    "downscale": "Просто открой задачу и смотри на неё 30 секунд.",
+    "success_question": "Что стало легче после шага?"
+  },
+  "tiny_plan_3": {
+    "title": "Tiny Plan 3",
+    "category": "action",
+    "patterns": [
+      "initiation_failure",
+      "avoidance"
+    ],
+    "energy": [
+      "low",
+      "medium",
+      "high"
+    ],
+    "why": "Навык снижает сопротивление и переводит состояние в действие.",
+    "steps": [
+      "Открой задачу",
+      "Сделай один микрошаг",
+      "Вернись в бот"
+    ],
+    "downscale": "Просто открой задачу и смотри на неё 30 секунд.",
+    "success_question": "Что стало легче после шага?"
+  },
+  "must_should_to_choice": {
+    "title": "Must Should To Choice",
+    "category": "action",
+    "patterns": [
+      "initiation_failure",
+      "avoidance"
+    ],
+    "energy": [
+      "low",
+      "medium",
+      "high"
+    ],
+    "why": "Навык снижает сопротивление и переводит состояние в действие.",
+    "steps": [
+      "Открой задачу",
+      "Сделай один микрошаг",
+      "Вернись в бот"
+    ],
+    "downscale": "Просто открой задачу и смотри на неё 30 секунд.",
+    "success_question": "Что стало легче после шага?"
+  },
+  "reward_after_start": {
+    "title": "Reward After Start",
+    "category": "action",
+    "patterns": [
+      "initiation_failure",
+      "avoidance"
+    ],
+    "energy": [
+      "low",
+      "medium",
+      "high"
+    ],
+    "why": "Навык снижает сопротивление и переводит состояние в действие.",
+    "steps": [
+      "Открой задачу",
+      "Сделай один микрошаг",
+      "Вернись в бот"
+    ],
+    "downscale": "Просто открой задачу и смотри на неё 30 секунд.",
+    "success_question": "Что стало легче после шага?"
+  },
+  "environment_prepare": {
+    "title": "Environment Prepare",
+    "category": "action",
+    "patterns": [
+      "initiation_failure",
+      "avoidance"
+    ],
+    "energy": [
+      "low",
+      "medium",
+      "high"
+    ],
+    "why": "Навык снижает сопротивление и переводит состояние в действие.",
+    "steps": [
+      "Открой задачу",
+      "Сделай один микрошаг",
+      "Вернись в бот"
+    ],
+    "downscale": "Просто открой задачу и смотри на неё 30 секунд.",
+    "success_question": "Что стало легче после шага?"
+  },
+  "friction_remove": {
+    "title": "Friction Remove",
+    "category": "action",
+    "patterns": [
+      "initiation_failure",
+      "avoidance"
+    ],
+    "energy": [
+      "low",
+      "medium",
+      "high"
+    ],
+    "why": "Навык снижает сопротивление и переводит состояние в действие.",
+    "steps": [
+      "Открой задачу",
+      "Сделай один микрошаг",
+      "Вернись в бот"
+    ],
+    "downscale": "Просто открой задачу и смотри на неё 30 секунд.",
+    "success_question": "Что стало легче после шага?"
+  },
+  "if_then_plan": {
+    "title": "If Then Plan",
+    "category": "action",
+    "patterns": [
+      "initiation_failure",
+      "avoidance"
+    ],
+    "energy": [
+      "low",
+      "medium",
+      "high"
+    ],
+    "why": "Навык снижает сопротивление и переводит состояние в действие.",
+    "steps": [
+      "Открой задачу",
+      "Сделай один микрошаг",
+      "Вернись в бот"
+    ],
+    "downscale": "Просто открой задачу и смотри на неё 30 секунд.",
+    "success_question": "Что стало легче после шага?"
+  },
+  "minimum_viable_day": {
+    "title": "Minimum Viable Day",
+    "category": "action",
+    "patterns": [
+      "initiation_failure",
+      "avoidance"
+    ],
+    "energy": [
+      "low",
+      "medium",
+      "high"
+    ],
+    "why": "Навык снижает сопротивление и переводит состояние в действие.",
+    "steps": [
+      "Открой задачу",
+      "Сделай один микрошаг",
+      "Вернись в бот"
+    ],
+    "downscale": "Просто открой задачу и смотри на неё 30 секунд.",
+    "success_question": "Что стало легче после шага?"
+  },
+  "shame_repair": {
+    "title": "Shame Repair",
+    "category": "action",
+    "patterns": [
+      "initiation_failure",
+      "avoidance"
+    ],
+    "energy": [
+      "low",
+      "medium",
+      "high"
+    ],
+    "why": "Навык снижает сопротивление и переводит состояние в действие.",
+    "steps": [
+      "Открой задачу",
+      "Сделай один микрошаг",
+      "Вернись в бот"
+    ],
+    "downscale": "Просто открой задачу и смотри на неё 30 секунд.",
+    "success_question": "Что стало легче после шага?"
+  },
+  "decision_2_options": {
+    "title": "Decision 2 Options",
+    "category": "action",
+    "patterns": [
+      "initiation_failure",
+      "avoidance"
+    ],
+    "energy": [
+      "low",
+      "medium",
+      "high"
+    ],
+    "why": "Навык снижает сопротивление и переводит состояние в действие.",
+    "steps": [
+      "Открой задачу",
+      "Сделай один микрошаг",
+      "Вернись в бот"
+    ],
+    "downscale": "Просто открой задачу и смотри на неё 30 секунд.",
+    "success_question": "Что стало легче после шага?"
+  },
+  "conversation_rehearsal": {
+    "title": "Conversation Rehearsal",
+    "category": "action",
+    "patterns": [
+      "initiation_failure",
+      "avoidance"
+    ],
+    "energy": [
+      "low",
+      "medium",
+      "high"
+    ],
+    "why": "Навык снижает сопротивление и переводит состояние в действие.",
+    "steps": [
+      "Открой задачу",
+      "Сделай один микрошаг",
+      "Вернись в бот"
+    ],
+    "downscale": "Просто открой задачу и смотри на неё 30 секунд.",
+    "success_question": "Что стало легче после шага?"
+  },
+  "boundary_script": {
+    "title": "Boundary Script",
+    "category": "action",
+    "patterns": [
+      "initiation_failure",
+      "avoidance"
+    ],
+    "energy": [
+      "low",
+      "medium",
+      "high"
+    ],
+    "why": "Навык снижает сопротивление и переводит состояние в действие.",
+    "steps": [
+      "Открой задачу",
+      "Сделай один микрошаг",
+      "Вернись в бот"
+    ],
+    "downscale": "Просто открой задачу и смотри на неё 30 секунд.",
+    "success_question": "Что стало легче после шага?"
+  },
+  "micro_commitment": {
+    "title": "Micro Commitment",
+    "category": "action",
+    "patterns": [
+      "initiation_failure",
+      "avoidance"
+    ],
+    "energy": [
+      "low",
+      "medium",
+      "high"
+    ],
+    "why": "Навык снижает сопротивление и переводит состояние в действие.",
+    "steps": [
+      "Открой задачу",
+      "Сделай один микрошаг",
+      "Вернись в бот"
+    ],
+    "downscale": "Просто открой задачу и смотри на неё 30 секунд.",
+    "success_question": "Что стало легче после шага?"
+  },
+  "progress_snapshot": {
+    "title": "Progress Snapshot",
+    "category": "action",
+    "patterns": [
+      "initiation_failure",
+      "avoidance"
+    ],
+    "energy": [
+      "low",
+      "medium",
+      "high"
+    ],
+    "why": "Навык снижает сопротивление и переводит состояние в действие.",
+    "steps": [
+      "Открой задачу",
+      "Сделай один микрошаг",
+      "Вернись в бот"
+    ],
+    "downscale": "Просто открой задачу и смотри на неё 30 секунд.",
+    "success_question": "Что стало легче после шага?"
+  },
+  "weekly_review_next_step": {
+    "title": "Weekly Review Next Step",
+    "category": "action",
+    "patterns": [
+      "initiation_failure",
+      "avoidance"
+    ],
+    "energy": [
+      "low",
+      "medium",
+      "high"
+    ],
+    "why": "Навык снижает сопротивление и переводит состояние в действие.",
+    "steps": [
+      "Открой задачу",
+      "Сделай один микрошаг",
+      "Вернись в бот"
+    ],
+    "downscale": "Просто открой задачу и смотри на неё 30 секунд.",
+    "success_question": "Что стало легче после шага?"
+  },
+  "crisis_grounding": {
+    "title": "Crisis Grounding",
+    "category": "regulation",
+    "patterns": [
+      "initiation_failure",
+      "avoidance"
+    ],
+    "energy": [
+      "low",
+      "medium",
+      "high"
+    ],
+    "why": "Навык снижает сопротивление и переводит состояние в действие.",
+    "steps": [
+      "Открой задачу",
+      "Сделай один микрошаг",
+      "Вернись в бот"
+    ],
+    "downscale": "Просто открой задачу и смотри на неё 30 секунд.",
+    "success_question": "Что стало легче после шага?"
+  }
+}
