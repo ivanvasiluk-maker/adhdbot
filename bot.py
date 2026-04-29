@@ -432,6 +432,7 @@ async def stats_cmd(m: Message):
 async def skiller_start_cmd(m: Message):
     u = await get_user(m.from_user.id, DB_PATH)
     u = init_skiller_user(u)
+    u["stage"] = "skiller_runtime"
     await save_user(u, DB_PATH)
     await m.answer(
         "Что сейчас мешает больше всего?",
@@ -447,17 +448,15 @@ async def cmd_start(m: Message):
     u = await get_user(m.from_user.id, DB_PATH)
     u["chat_id"] = m.chat.id
     u["username"] = m.from_user.username or ""
-    u = init_skiller_user(u)
+    u["stage"] = "ask_name"
+    u["current_mode"] = ""
+    u["onboarding_completed"] = 0
     await save_user(u, DB_PATH)
     await log_event_v2(u["user_id"], "start", {"source": "/start"}, DB_PATH)
-    await log_event_v2(u["user_id"], "onboarding_started", {}, DB_PATH)
-    await m.answer(
-        "Что сейчас мешает больше всего?",
-        reply_markup=ReplyKeyboardMarkup(
-            keyboard=[[KeyboardButton(text="Не могу начать"), KeyboardButton(text="Залипаю"), KeyboardButton(text="Перегруз")]],
-            resize_keyboard=True,
-        ),
-    )
+    await log_event_v2(u["user_id"], "onboarding_started", {"flow": "legacy_personal"}, DB_PATH)
+    for screen in ONBOARDING_SCREENS:
+        await m.answer(screen)
+    await m.answer("Привет! Я тренер навыков саморегуляции. Как тебя зовут? (1 слово)")
 
 
 # ============================================================
@@ -651,7 +650,7 @@ async def main_flow(m: Message):
     text = (m.text or "").strip()
     low = text.lower()
 
-    if u.get("current_mode") in SKILLER_STATES:
+    if u.get("stage") == "skiller_runtime" and u.get("current_mode") in SKILLER_STATES:
         if await skiller_ai_crisis(text):
             result = process_skiller_text(u, "кризис")
             await save_user(u, DB_PATH)
