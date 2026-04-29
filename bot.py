@@ -426,10 +426,9 @@ async def cmd_start(m: Message):
     u["stage"] = "ask_name"
     await track_user_event(u, "onboarding", "onboarding_started")
     await save_user(u, DB_PATH)
+    await m.answer("Привет. Я тренажёр навыков саморегуляции.")
+    await m.answer("Я не терапия и не диагноз. Я помогаю тренировать маленькие действия каждый день.")
     await m.answer(
-        "Привет. Я тренер навыков саморегуляции.\n\n"
-        "Я не лечу и не ставлю диагнозы.\n"
-        "Я помогаю запускать действия, когда не получается.\n\n"
         "Как тебя зовут? (1 слово)",
         reply_markup=ReplyKeyboardMarkup(keyboard=[[KeyboardButton(text="Пропустить")]], resize_keyboard=True),
     )
