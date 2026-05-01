@@ -321,6 +321,18 @@ async def track_user_event(u: Dict[str, Any], stage: str, event: str, meta: Opti
     )
 
 
+
+
+def training_redirect_reply(stage: str) -> str:
+    stage = stage or ""
+    if stage in {"training", "after_done", "after_return_choice", "skill_entry"}:
+        return "Берём текущий навык. Один круг. Выбери кнопку ниже 👇"
+    if stage in {"await_training_target", "morning_checkin", "daily_check_sleep", "daily_check_anxiety", "daily_check_energy"}:
+        return "Чтобы дать точный навык дня, выбери вариант кнопкой 👇"
+    if stage in {"crisis_choose_mode", "crisis_text", "crisis_voice", "crisis_plan_confirm"}:
+        return "Если сейчас остро — жми 🆘 Кризис. Если нет — возвращаемся к короткому кругу 👇"
+    return "Я здесь как тренажёр, не как свободный чат. Берём навык, прогресс или кризис 👇"
+
 async def ask_training_target(m: Message):
     await m.answer(
         "Перед стартом: что ты прокрастинируешь сегодня?\n"
@@ -414,10 +426,9 @@ async def cmd_start(m: Message):
     u["stage"] = "ask_name"
     await track_user_event(u, "onboarding", "onboarding_started")
     await save_user(u, DB_PATH)
+    await m.answer("Привет. Мы не очередная мотиваторская ерунда.")
+    await m.answer("Мы работаем над навыками: маленький шаг → действие → отметка → повтор.")
     await m.answer(
-        "Привет. Я тренер навыков саморегуляции.\n\n"
-        "Я не лечу и не ставлю диагнозы.\n"
-        "Я помогаю запускать действия, когда не получается.\n\n"
         "Как тебя зовут? (1 слово)",
         reply_markup=ReplyKeyboardMarkup(keyboard=[[KeyboardButton(text="Пропустить")]], resize_keyboard=True),
     )
@@ -546,6 +557,15 @@ async def main_flow(m: Message):
         await m.answer("🆘 Ок. Как удобнее?", reply_markup=kb_crisis_mode)
         return
 
+    # Глобальный хук: прогресс только после старта тренировочного цикла
+    if text == "📊 Мой прогресс" and int(u.get("day") or 0) > 0:
+        sid = u.get("current_skill_id") or (get_current_plan(u)[0] if get_current_plan(u) else "")
+        skill_name = (SKILLS_DB.get(sid) or {}).get("name", "ещё не выбран")
+        from texts import progress_screen_text, kb_progress_only
+        await m.answer(progress_screen_text(u, skill_name), reply_markup=kb_progress_only)
+        return
+
+
     if u.get("stage") == "evening_close_wait":
         trainer_key = u.get("trainer_key") or "marsha"
         if not text:
@@ -553,12 +573,14 @@ async def main_flow(m: Message):
             return
 
         mapped = text
-        if text == "👍 сделал":
+        if text == "✅ сделал":
             mapped = "Сделал"
         elif text == "😐 частично":
             mapped = "Частично"
         elif text == "❌ не сделал":
             mapped = "Не сделал"
+        elif text == "↩️ срывался, но возвращался":
+            mapped = "Срывался, но возвращался"
         else:
             await m.answer("Выбери один вариант 👇", reply_markup=kb_evening_close)
             return
@@ -1218,9 +1240,9 @@ async def main_flow(m: Message):
         low = (text or "").lower().strip()
 
         mood_key = None
-        if text == "😐 норм" or "норм" in low:
+        if text == "нормально":
             mood_key = "ok"
-        elif text == "😣 тяжело" or "тяж" in low:
+        elif text in {"тревожно", "нет сил", "отвлекаюсь", "не хочу начинать"}:
             mood_key = "empty"
 
         if not mood_key:
@@ -1273,7 +1295,7 @@ async def main_flow(m: Message):
         await save_user(u, DB_PATH)
 
         await m.answer(
-            skill_card_text(skill, trainer_key=trainer_key),
+            skill_card_text(skill, trainer_key=trainer_key, target=target),
             reply_markup=kb_skill_entry,
         )
         return
@@ -1326,6 +1348,14 @@ async def main_flow(m: Message):
             await show_current_skill_training(m, u)
             return
 
+
+        if text == "🤔 Не понял зачем":
+            await m.answer(
+                trainer_say(u.get("trainer_key") or "marsha", "Коротко: мы тренируем не результат, а возврат в действие. Сделай один минимальный круг."),
+                reply_markup=kb_training_run,
+            )
+            return
+
         if text == "🆘 Кризис":
             u["stage"] = "crisis_choose_mode"
             await save_user(u, DB_PATH)
@@ -1339,7 +1369,7 @@ async def main_flow(m: Message):
     if u.get("stage") == "training":
         low = text.lower().strip()
 
-        if text == "✅ Сделал(а)":
+        if text == "💪 Сделал":
             u["done_count"] = int(u.get("done_count") or 0) + 1
             gamify_apply(u, 1, "done")
             await track_user_event(u, "training", "done", {"day": u.get("day")})
@@ -1355,7 +1385,7 @@ async def main_flow(m: Message):
             )
             return
 
-        if text == "↩️ Вернулся(лась)":
+        if text == "↩️ Вернулся":
             u["return_count"] = int(u.get("return_count") or 0) + 1
             gamify_apply(u, 1, "return")
             await track_user_event(u, "training", "return", {"day": u.get("day")})
@@ -1372,6 +1402,14 @@ async def main_flow(m: Message):
             )
             return
 
+
+        if text == "🤔 Не понял зачем":
+            await m.answer(
+                trainer_say(u.get("trainer_key") or "marsha", "Коротко: мы тренируем не результат, а возврат в действие. Сделай один минимальный круг."),
+                reply_markup=kb_training_run,
+            )
+            return
+
         if text == "🆘 Кризис":
             u["stage"] = "crisis_choose_mode"
             await save_user(u, DB_PATH)
@@ -1384,20 +1422,15 @@ async def main_flow(m: Message):
     if u.get("stage") == "after_done":
         trainer_key = u.get("trainer_key") or "marsha"
         if text == "🙂 Чуть легче":
-            reply = "Отлично. Закрепляем тем же шагом."
+            reply = "Отлично. Значит, вход стал чуть доступнее. Это и есть тренировка."
         elif text == "😐 Скучно":
-            reply = "Скучно — нормально.\n\nНавыки работают не через интерес,\nа через повтор."
+            reply = "Скучно — нормально. Навык не обязан вдохновлять. Он должен повторяться."
         elif text == "😣 Тяжело":
-            reply = "Тяжело — значит ты попал в нужное место.\n\nМы не избегаем этого.\nМы уменьшаем порог входа."
-        elif text == "🤔 Не понял, зачем это":
-            reply = (
-                "Смотри.\n\n"
-                "Это не про продуктивность.\n"
-                "Это про обход стопа на старте.\n\n"
-                "Пока ты не умеешь начинать —\n"
-                "никакие техники не работают.\n\n"
-                "Этот навык тренирует именно это."
-            )
+            reply = "Ок. Значит, шаг был великоват. В следующий раз режем ещё меньше."
+        elif text == "🤔 Не верю, что это работает":
+            reply = "Не надо верить. Проверяем не веру, а факт: стало ли проще сделать следующий маленький шаг."
+        elif text == "❌ Не сделал":
+            reply = "Это не провал. Это данные. Значит, вход был слишком тяжёлый. Сейчас дадим версию ещё меньше."
         else:
             await m.answer("Выбери вариант ниже 👇", reply_markup=kb_after_done)
             return
@@ -1580,7 +1613,10 @@ async def main_flow(m: Message):
     # Если дошли до сюда — неизвестный этап, выводим stage для отладки
     stage = str(u.get('stage')).replace('_', '\\_').replace('*', '\\*').replace('[', '\\[').replace(']', '\\]').replace('`', '\\`')
     if stage != "post_done_reflection":
-        await m.answer(f"Неизвестный этап (stage): {stage}. Напиши /start чтобы начать заново или обратись к поддержке.", parse_mode=None)
+        if int(u.get("day") or 0) > 0:
+            await m.answer(training_redirect_reply(u.get("stage")), reply_markup=kb_skill_entry)
+        else:
+            await m.answer("Похоже, этап диагностики сбился. Напиши /start — верну тебя в начальный разбор.")
 
 # ============================================================
 # CALLBACKS
