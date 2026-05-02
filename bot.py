@@ -426,6 +426,8 @@ async def cmd_start(m: Message):
     u["stage"] = "ask_name"
     await track_user_event(u, "onboarding", "onboarding_started")
     await save_user(u, DB_PATH)
+    await m.answer("Привет. Мы не очередная мотиваторская ерунда.")
+    await m.answer("Мы работаем над навыками: маленький шаг → действие → отметка → повтор.")
     await m.answer("Похоже, ты уже не раз пробовал(а) разобраться —\nно в какой-то момент всё равно знаешь, что делать, и не начинаешь.\n\nС этим можно работать.")
     await m.answer("Я помогу понять, где именно у тебя сейчас стоп,\nи собрать под это короткий рабочий план.\n\nЭто не терапия и не диагноз.\nЕсли станет резко тяжело — нажми «🆘 Кризис».")
     await m.answer(
@@ -1371,7 +1373,7 @@ async def main_flow(m: Message):
     if u.get("stage") == "training":
         low = text.lower().strip()
 
-        if text == "✅ Сделал(а)":
+        if text == "💪 Сделал":
             u["done_count"] = int(u.get("done_count") or 0) + 1
             gamify_apply(u, 1, "done")
             await track_user_event(u, "training", "done", {"day": u.get("day")})
@@ -1387,7 +1389,7 @@ async def main_flow(m: Message):
             )
             return
 
-        if text == "↩️ Вернулся(лась)":
+        if text == "↩️ Вернулся":
             u["return_count"] = int(u.get("return_count") or 0) + 1
             gamify_apply(u, 1, "return")
             await track_user_event(u, "training", "return", {"day": u.get("day")})
