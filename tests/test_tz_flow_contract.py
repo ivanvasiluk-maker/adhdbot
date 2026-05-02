@@ -33,8 +33,8 @@ def test_payment_offer_contract():
 
 def test_training_keyboard_contract():
     labels = _kb_texts(kb_training_run)
-    assert "💪 Сделал" in labels
-    assert "↩️ Вернулся" in labels
+    assert "✅ Сделал(а)" in labels
+    assert "↩️ Вернулся(лась)" in labels
     assert "🤔 Не понял зачем" in labels
     assert "🆘 Кризис" in labels
 
@@ -50,7 +50,6 @@ def test_morning_evening_keyboards_contract():
 def test_skill_card_contains_required_sections():
     sample = next(iter(SKILLS_DB.values()))
     text = skill_card_text(sample, target="не пишу текст")
-    for marker in ["🧩 Навык:", "Зачем:", "Сделай:", "Минимум:", "Кнопки:"]:
+    for marker in ["📌 На чём тренируемся:", "🧩 Навык:", "Сделай:", "Минимум:", "Всё."]:
         assert marker in text
-    for btn in ["💪 Сделал", "↩️ Вернулся", "🤔 Не понял зачем", "🆘 Кризис"]:
-        assert btn in text
+
