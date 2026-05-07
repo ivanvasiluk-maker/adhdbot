@@ -104,7 +104,7 @@ def detect_build_ref() -> str:
 
 
 APP_VERSION = f"2026-04-27-{detect_build_ref()}"
-ONBOARDING_INTRO_VERSION = "2026-05-07-two-message-v2"
+ONBOARDING_INTRO_VERSION = "2026-05-07-two-message-v1"
 
 BOT_TOKEN = (os.getenv("BOT_TOKEN") or "").strip()
 OPENAI_API_KEY = (os.getenv("OPENAI_API_KEY") or "").strip()
@@ -429,9 +429,20 @@ async def cmd_start(m: Message):
     u["stage"] = "ask_name"
     await track_user_event(u, "onboarding", "onboarding_started")
     await save_user(u, DB_PATH)
-    for screen in ONBOARDING_SCREENS:
-        await m.answer(screen)
-
+    await m.answer(
+        "😮‍💨 Ты уже, скорее всего, всё пробовал(а): трекеры, микрошаги, советы, даже терапию.\n"
+        "Ты знаешь, ЧТО делать, но это не становится действием.\n\n"
+        "⚠️ Проблема не в знаниях и не в силе воли. Навыки не работают, если их не тренируют системно.\n"
+        "Здесь не будет трекеров «сделал/не сделал», мотивации, которая сдувается, и разговоров без действий."
+    )
+    await m.answer(
+        "Мы тренируем функции: запуск, удержание внимания, возврат без самокритики.\n\n"
+        "Минимальные попытки — 60–120 секунд. Даже если мотивации нет, мы опираемся на маленькие действия.\n"
+        "Срыв — часть процесса. Мы возвращаем, а не наказываем.\n\n"
+        "⚠️ Это не терапия и не диагноз. Если чувствуешь опасность или кризис — сразу жми «🆘 Кризис».\n\n"
+        "Дальше ты выберешь тренера: мягко (Марша), жёстко (Скинни) или логично (Бек).\n"
+        "Стиль можно сменить позже."
+    )
     await m.answer(
         ASK_NAME_TEXT,
         reply_markup=ReplyKeyboardMarkup(keyboard=[[KeyboardButton(text="Пропустить")]], resize_keyboard=True),
