@@ -59,20 +59,29 @@ async def send_trainer_photo_if_any(chat_id: int, trainer_key: str, bot_token: s
     from aiogram import Bot
     from aiogram.types import FSInputFile
     base = os.path.join(os.path.dirname(__file__), "images", trainer_key)
-    for ext in ("jpg", "jpeg", "png", "webp"):  # ищем любой формат
-        for fname in os.listdir(base):
-            if fname.lower().endswith(ext):
-                path = os.path.join(base, fname)
-                try:
-                    b = Bot(token=bot_token)
-                    await b.send_photo(chat_id, FSInputFile(path))
-                    await b.session.close()
-                    logging.info(f"[PHOTO] Sent trainer photo: {path} to chat {chat_id}")
-                    return
-                except Exception as e:
-                    logging.error(f"[PHOTO] Failed to send {path} to chat {chat_id}: {e}")
-                    continue
-    logging.warning(f"[PHOTO] No photo found for trainer {trainer_key} in {base}")
+    if not os.path.isdir(base):
+        logging.warning(f"[PHOTO] Trainer photo directory is missing for {trainer_key}: {base}")
+        return
+
+    photo_exts = (".jpg", ".jpeg", ".png", ".webp")
+    for fname in os.listdir(base):
+        if not fname.lower().endswith(photo_exts):
+            continue
+
+        path = os.path.join(base, fname)
+        try:
+            b = Bot(token=bot_token)
+            try:
+                await b.send_photo(chat_id, FSInputFile(path))
+            finally:
+                await b.session.close()
+            logging.info(f"[PHOTO] Sent trainer photo: {path} to chat {chat_id}")
+            return
+        except Exception as e:
+            logging.error(f"[PHOTO] Failed to send {path} to chat {chat_id}: {e}")
+            continue
+
+    logging.warning(f"[PHOTO] No supported photo found for trainer {trainer_key} in {base}")
     return
 
 # Заглушка для send_trainer_introduction
