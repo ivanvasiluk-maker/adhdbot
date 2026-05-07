@@ -104,6 +104,7 @@ def detect_build_ref() -> str:
 
 
 APP_VERSION = f"2026-04-27-{detect_build_ref()}"
+ONBOARDING_INTRO_VERSION = "2026-05-07-two-message-v1"
 
 BOT_TOKEN = (os.getenv("BOT_TOKEN") or "").strip()
 OPENAI_API_KEY = (os.getenv("OPENAI_API_KEY") or "").strip()
@@ -122,6 +123,7 @@ TEST_MODE = (os.getenv("TEST_MODE") or "").lower() in {"1", "true", "yes", "on",
 ENABLE_PAYMENTS = (os.getenv("ENABLE_PAYMENTS") or "").lower() in {"1", "true", "yes", "on"}
 
 log.info(f"APP_VERSION: {APP_VERSION}")
+log.info(f"ONBOARDING_INTRO_VERSION: {ONBOARDING_INTRO_VERSION}")
 log.info(f"TEST_MODE: {TEST_MODE}")
 log.info(f"ENABLE_PAYMENTS: {ENABLE_PAYMENTS}")
 
@@ -355,6 +357,7 @@ router = Router()
 async def version_cmd(m: Message):
     await m.answer(
         f"version={APP_VERSION}\n"
+        f"onboarding_intro={ONBOARDING_INTRO_VERSION}\n"
         f"ai_enabled={AI_ANALYSIS_ENABLED}\n"
         f"model={OPENAI_CHAT_MODEL}\n"
         f"whisper={OPENAI_WHISPER_MODEL}"
@@ -2072,7 +2075,7 @@ async def main():
         await init_db(DB_PATH)
         await migrate_db(DB_PATH)
         asyncio.create_task(background_ping(bot))
-        log.info("Bot started")
+        log.info("Bot started version=%s onboarding_intro=%s", APP_VERSION, ONBOARDING_INTRO_VERSION)
         await dp.start_polling(bot)
     except asyncio.exceptions.CancelledError:
         log.info("Polling cancelled, shutting down...")
