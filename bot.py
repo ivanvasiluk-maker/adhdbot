@@ -28,7 +28,7 @@ from openai import OpenAI
 
 # Import modules
 from texts import (
-    TEST_QUESTIONS, ONBOARDING_SCREENS,
+    TEST_QUESTIONS, ONBOARDING_SCREENS, ASK_NAME_TEXT,
     trainer_say, kb_trainers, kb_input_mode, kb_yes_no,
     kb_day1_mirror, kb_day1_try, kb_day1_start, kb_day1_result,
     kb_crisis_mode, kb_analysis_confirm, kb_analysis_contract,
@@ -104,6 +104,7 @@ def detect_build_ref() -> str:
 
 
 APP_VERSION = f"2026-04-27-{detect_build_ref()}"
+ONBOARDING_INTRO_VERSION = "2026-05-07-two-message-v2"
 
 BOT_TOKEN = (os.getenv("BOT_TOKEN") or "").strip()
 OPENAI_API_KEY = (os.getenv("OPENAI_API_KEY") or "").strip()
@@ -122,6 +123,7 @@ TEST_MODE = (os.getenv("TEST_MODE") or "").lower() in {"1", "true", "yes", "on",
 ENABLE_PAYMENTS = (os.getenv("ENABLE_PAYMENTS") or "").lower() in {"1", "true", "yes", "on"}
 
 log.info(f"APP_VERSION: {APP_VERSION}")
+log.info(f"ONBOARDING_INTRO_VERSION: {ONBOARDING_INTRO_VERSION}")
 log.info(f"TEST_MODE: {TEST_MODE}")
 log.info(f"ENABLE_PAYMENTS: {ENABLE_PAYMENTS}")
 
@@ -355,6 +357,7 @@ router = Router()
 async def version_cmd(m: Message):
     await m.answer(
         f"version={APP_VERSION}\n"
+        f"onboarding_intro={ONBOARDING_INTRO_VERSION}\n"
         f"ai_enabled={AI_ANALYSIS_ENABLED}\n"
         f"model={OPENAI_CHAT_MODEL}\n"
         f"whisper={OPENAI_WHISPER_MODEL}"
@@ -426,12 +429,11 @@ async def cmd_start(m: Message):
     u["stage"] = "ask_name"
     await track_user_event(u, "onboarding", "onboarding_started")
     await save_user(u, DB_PATH)
-    await m.answer("Привет. Мы не очередная мотиваторская ерунда.")
-    await m.answer("Мы работаем над навыками: маленький шаг → действие → отметка → повтор.")
-    await m.answer("Похоже, ты уже не раз пробовал(а) разобраться —\nно в какой-то момент всё равно знаешь, что делать, и не начинаешь.\n\nС этим можно работать.")
-    await m.answer("Я помогу понять, где именно у тебя сейчас стоп,\nи собрать под это короткий рабочий план.\n\nЭто не терапия и не диагноз.\nЕсли станет резко тяжело — нажми «🆘 Кризис».")
+    for screen in ONBOARDING_SCREENS:
+        await m.answer(screen)
+
     await m.answer(
-        "Как тебя зовут? (1 слово)",
+        ASK_NAME_TEXT,
         reply_markup=ReplyKeyboardMarkup(keyboard=[[KeyboardButton(text="Пропустить")]], resize_keyboard=True),
     )
 
@@ -2062,7 +2064,7 @@ async def main():
         await init_db(DB_PATH)
         await migrate_db(DB_PATH)
         asyncio.create_task(background_ping(bot))
-        log.info("Bot started")
+        log.info("Bot started version=%s onboarding_intro=%s", APP_VERSION, ONBOARDING_INTRO_VERSION)
         await dp.start_polling(bot)
     except asyncio.exceptions.CancelledError:
         log.info("Polling cancelled, shutting down...")
