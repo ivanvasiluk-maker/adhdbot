@@ -59,20 +59,29 @@ async def send_trainer_photo_if_any(chat_id: int, trainer_key: str, bot_token: s
     from aiogram import Bot
     from aiogram.types import FSInputFile
     base = os.path.join(os.path.dirname(__file__), "images", trainer_key)
-    for ext in ("jpg", "jpeg", "png", "webp"):  # ищем любой формат
-        for fname in os.listdir(base):
-            if fname.lower().endswith(ext):
-                path = os.path.join(base, fname)
-                try:
-                    b = Bot(token=bot_token)
-                    await b.send_photo(chat_id, FSInputFile(path))
-                    await b.session.close()
-                    logging.info(f"[PHOTO] Sent trainer photo: {path} to chat {chat_id}")
-                    return
-                except Exception as e:
-                    logging.error(f"[PHOTO] Failed to send {path} to chat {chat_id}: {e}")
-                    continue
-    logging.warning(f"[PHOTO] No photo found for trainer {trainer_key} in {base}")
+    if not os.path.isdir(base):
+        logging.warning(f"[PHOTO] Trainer photo directory is missing for {trainer_key}: {base}")
+        return
+
+    photo_exts = (".jpg", ".jpeg", ".png", ".webp")
+    for fname in os.listdir(base):
+        if not fname.lower().endswith(photo_exts):
+            continue
+
+        path = os.path.join(base, fname)
+        try:
+            b = Bot(token=bot_token)
+            try:
+                await b.send_photo(chat_id, FSInputFile(path))
+            finally:
+                await b.session.close()
+            logging.info(f"[PHOTO] Sent trainer photo: {path} to chat {chat_id}")
+            return
+        except Exception as e:
+            logging.error(f"[PHOTO] Failed to send {path} to chat {chat_id}: {e}")
+            continue
+
+    logging.warning(f"[PHOTO] No supported photo found for trainer {trainer_key} in {base}")
     return
 
 # Заглушка для send_trainer_introduction
@@ -363,58 +372,19 @@ async def handle_crisis(m: Message, u: dict, user_text: str, db_path: str, sheet
     )
     gamify_apply(u, 1, "crisis_used")
 
-    await m.answer(trainer_say(trainer_key, "Ок. Сейчас быстро стабилизируем и вернём контроль."))
-    
-    # AI crisis help (если доступно)
-    try:
-        r = await ai_crisis_help(trainer_key, bucket, user_text, client, model)
-    except Exception as e:
-        log.error(f"ai_crisis_help failed: {e}")
-        # жёсткий фолбэк, чтобы не было тишины
-        r = {
-            "support": "Ок. Берём один шаг, чтобы вернуть контроль.",
-            "skill_id": "return_no_punish",
-            "why_this": "Возврат без самонаказания снимает ступор и даёт действие.",
-            "micro_step": "Скажи «Возвращаюсь» и сделай 60–120 сек самого первого шага.",
-            "plan_change": None,
-        }
-
-    sid = r.get("skill_id") or fallback_sid
-    if sid not in SKILLS_DB:
-        log.warning(f"[CRISIS] skill_id {sid} not in SKILLS_DB, fallback to {fallback_sid}")
-        sid = fallback_sid
-    from skills import format_skill, suggest_alternative_skill
-    trainer_key = u.get("trainer_key") or "marsha"
-    # Use format_skill for modern skill presentation
-    skill_msg = format_skill(sid, trainer_key)
-    micro_step = r.get("micro_step") or SKILLS_DB[sid].get("minimum", SKILLS_DB[sid].get("how"))
-    msg = (
-        f"🆘 {name}, коротко:\n"
-        f"{r['support']}\n\n"
-        f"{skill_msg}\n"
-        f"✅ Микро-шаг: {micro_step}\n\n"
-        f"Почему это сейчас: {r['why_this']}"
+    await m.answer(
+        trainer_say(
+            trainer_key,
+            "Ок. Сейчас стабилизируем.\n\n"
+            "1. Назови, что происходит.\n"
+            "2. Сделай один физический якорь.\n"
+            "3. Вернись к одному маленькому шагу."
+        )
     )
-    await m.answer(msg)
-
-    pc = r.get("plan_change")
-    if pc:
-        day_num = int(u.get("day") or 1) + int(pc.get("day_offset") or 1)
-        new_sid = pc.get("replace_with")
-        if new_sid in SKILLS_DB:
-            u["pending_plan_change"] = json.dumps({"day_num": day_num, "skill_id": new_sid}, ensure_ascii=False)
-            u["stage"] = "crisis_plan_confirm"
-            await save_user(u, db_path)
-            await m.answer(
-                f"Хочешь, я на завтра (день {day_num}) заменю навык на:\n"
-                f"➡️ {SKILLS_DB[new_sid]['name']} ?",
-                reply_markup=kb_yes_no
-            )
-            return
 
     u["stage"] = "training"
     await save_user(u, db_path)
-    await m.answer("Возвращаемся в тренировку 👇", reply_markup=kb_training_run)
+    await m.answer("Возвращаемся в тренировку.", reply_markup=kb_training_run)
 
 # ============================================================
 # AI CRISIS HELP

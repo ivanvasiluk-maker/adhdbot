@@ -61,7 +61,7 @@ TRAINER_INTRO_TEXT = {
         )
     },
     "skinny": {
-        "who": "🐈‍⬛ Скинни — жёсткий тренер",
+        "who": "🐈‍⬛ Скинни — прямой тренер",
         "for_whom": (
             "Подходит, если:\n"
             "• нужен толчок\n"
@@ -223,7 +223,7 @@ TRAINER_INTRO_TEXT = {
         )
     },
     "skinny": {
-        "who": "🐈‍⬛ Скинни — жёсткий тренер",
+        "who": "🐈‍⬛ Скинни — прямой тренер",
         "for_whom": (
             "Подходит, если:\n"
             "• нужен толчок\n"
@@ -415,22 +415,36 @@ def skill_detail_text(skill: dict) -> str:
     return "\n".join(parts)
 
 
-def skill_card_text(skill: dict, trainer_key: str = "marsha") -> str:
-    """Короткая карточка навыка дня для экрана skill_entry."""
+def skill_card_text(skill: dict, trainer_key: str = "marsha", target: str = "") -> str:
+    """Строгий формат карточки навыка по ТЗ."""
     name = skill.get("name", "Навык")
-    goal = skill.get("goal") or ""
-    micro = skill.get("micro") or skill.get("minimum") or ""
+    goal = (skill.get("goal") or "Сделать вход в задачу доступнее.").strip()
+    step1 = (skill.get("step1") or "Открой задачу.").strip()
+    step2 = (skill.get("step2") or "Сделай 1 маленькое действие.").strip()
+    step3 = (skill.get("step3") or "Остановись и отметь факт выполнения.").strip()
+    minimum = (skill.get("minimum") or skill.get("micro") or "30 секунд действия").strip()
 
-    parts = [f"🧩 Навык дня: {name}"]
-    if goal:
-        parts.append(f"🎯 Цель: {goal}")
-    if micro:
-        parts.append(f"⚡ Минимум: {micro}")
+    if not target:
+        target = "прокрастинация в целом"
+    first = step1[0].lower() + step1[1:] if len(step1) > 1 else step1.lower()
+    step1 = f"На задаче «{target}»: {first}"
 
-    return "\n".join(parts)
+    return f"""📌 На чём тренируемся: {target}
+
+🧩 Навык: {name}
+
+Сделай:
+1. {step1}
+2. {step2}
+3. {step3}
+
+Минимум:
+{minimum}
+
+Всё."""
 
 
-def skill_training_text(skill: dict, trainer_key: str = "marsha") -> str:
+def skill_training_text(skill: dict, trainer_key: str = "marsha", target: str = "") -> str:
     """Строгий формат тренировки: только действие без объяснений."""
     name = skill.get("name", "Навык")
     _, step1, step2, step3, _, _ = _skill_format_parts(skill)
@@ -439,10 +453,13 @@ def skill_training_text(skill: dict, trainer_key: str = "marsha") -> str:
     if not steps:
         steps = [skill.get("micro") or skill.get("minimum") or "Открой задачу и сделай 2 минуты."]
 
-    lines = [f"🧩 Навык: {name}", "", "Сделай:"]
+    if not target:
+        target = "прокрастинация в целом"
+
+    lines = [f"📌 На чём тренируемся: {target}", "", f"🧩 Навык: {name}", "", "Сделай:"]
     for idx, step in enumerate(steps[:3], start=1):
         lines.append(f"{idx}. {step}")
-    lines.extend(["", "Все."])
+    lines.extend(["", "Всё."])
     return "\n".join(lines)
 
 # ============================================================
@@ -459,7 +476,7 @@ kb_input_mode = ReplyKeyboardMarkup(
 
 kb_trainers = ReplyKeyboardMarkup(
     keyboard=[
-        [KeyboardButton(text="🐈‍⬛ Скинни (жёстко)")],
+        [KeyboardButton(text="🐈‍⬛ Скинни (прямо)")],
         [KeyboardButton(text="🐈 Марша (мягко)")],
         [KeyboardButton(text="🐈‍🦁 Бек (аналитично)")],
     ],
@@ -514,7 +531,11 @@ kb_day1_result = ReplyKeyboardMarkup(
 
 kb_morning_checkin = ReplyKeyboardMarkup(
     keyboard=[
-        [KeyboardButton(text="😐 норм"), KeyboardButton(text="😣 тяжело")],
+        [KeyboardButton(text="нормально")],
+        [KeyboardButton(text="тревожно")],
+        [KeyboardButton(text="нет сил")],
+        [KeyboardButton(text="отвлекаюсь")],
+        [KeyboardButton(text="не хочу начинать")],
     ],
     resize_keyboard=True,
 )
@@ -548,9 +569,10 @@ kb_daily_check_energy = ReplyKeyboardMarkup(
 
 kb_evening_close = ReplyKeyboardMarkup(
     keyboard=[
-        [KeyboardButton(text="👍 сделал")],
+        [KeyboardButton(text="✅ сделал")],
         [KeyboardButton(text="😐 частично")],
         [KeyboardButton(text="❌ не сделал")],
+        [KeyboardButton(text="↩️ срывался, но возвращался")],
     ],
     resize_keyboard=True,
 )
@@ -816,10 +838,7 @@ def daytime_ping(trainer_key: str, name: str = "") -> str:
 
 def evening_close_question(trainer_key: str) -> str:
     return (
-        "Как сегодня с задачей?\n\n"
-        "1) сделал\n"
-        "2) частично\n"
-        "3) не получилось"
+        "Как прошёл день?"
     )
 
 
@@ -862,7 +881,7 @@ def evening_close_coach_reply(trainer_key: str, user_text: str) -> str:
 kb_analysis_confirm = ReplyKeyboardMarkup(
     keyboard=[
         [KeyboardButton(text="✅ Да, в точку")],
-        [KeyboardButton(text="🤔 Немного не так")],
+        [KeyboardButton(text="🤔 Не совсем")],
         [KeyboardButton(text="📚 Подробнее")],
     ],
     resize_keyboard=True
@@ -870,8 +889,8 @@ kb_analysis_confirm = ReplyKeyboardMarkup(
 
 kb_analysis_contract = ReplyKeyboardMarkup(
     keyboard=[
-        [KeyboardButton(text="📜 Принимаю контракт")],
-        [KeyboardButton(text="🤔 Немного не так")],
+        [KeyboardButton(text="📜 Принимаю план")],
+        [KeyboardButton(text="🤔 Не совсем")],
     ],
     resize_keyboard=True,
 )
@@ -890,8 +909,10 @@ kb_skill_entry = ReplyKeyboardMarkup(
 
 kb_training_run = ReplyKeyboardMarkup(
     keyboard=[
-        [KeyboardButton(text="✅ Сделал(а)"), KeyboardButton(text="↩️ Вернулся(лась)")],
-        [KeyboardButton(text="📊 Мой прогресс"), KeyboardButton(text="🆘 Кризис")],
+        [KeyboardButton(text="✅ Сделал(а)")],
+        [KeyboardButton(text="↩️ Вернулся(лась)")],
+        [KeyboardButton(text="🤔 Не понял зачем")],
+        [KeyboardButton(text="🆘 Кризис")],
     ],
     resize_keyboard=True,
 )
@@ -962,7 +983,8 @@ kb_after_done = ReplyKeyboardMarkup(
         [KeyboardButton(text="🙂 Чуть легче")],
         [KeyboardButton(text="😐 Скучно")],
         [KeyboardButton(text="😣 Тяжело")],
-        [KeyboardButton(text="🤔 Не понял, зачем это")],
+        [KeyboardButton(text="🤔 Не понял зачем")],
+        [KeyboardButton(text="❌ Не сделал")],
     ],
     resize_keyboard=True,
 )
@@ -975,9 +997,9 @@ kb_after_return = ReplyKeyboardMarkup(
     resize_keyboard=True,
 )
 
-BTN_CONTINUE_PLAN = "📅 Хочу продолжить по плану"
-BTN_THINK = "🤔 Пока думаю"
-BTN_WHAT_NEXT = "❓ Что я получу дальше"
+BTN_CONTINUE_PLAN = "💳 Продолжить"
+BTN_THINK = "🤔 Подумаю"
+BTN_WHAT_NEXT = "❓ Что я получу"
 BTN_PAY = "💳 Продолжить"
 
 kb_day2_offer = ReplyKeyboardMarkup(
@@ -999,6 +1021,7 @@ kb_paywall = ReplyKeyboardMarkup(
 kb_pay_simple = ReplyKeyboardMarkup(
     keyboard=[
         [KeyboardButton(text=BTN_PAY)],
+        [KeyboardButton(text=BTN_WHAT_NEXT)],
         [KeyboardButton(text=BTN_THINK)],
     ],
     resize_keyboard=True,
@@ -1022,17 +1045,19 @@ kb_yes_no_inline = InlineKeyboardMarkup(
 
 ONBOARDING_SCREENS = [
     (
-        "Похоже, ты уже не раз пробовал(а) разобраться —\n"
-        "но в какой-то момент всё равно знаешь, что делать, и не начинаешь.\n\n"
-        "С этим можно работать."
+        "😮‍💨 Ты уже многое пробовал(а): трекеры, микрошаги, советы, возможно, терапию.\n"
+        "Ты знаешь, ЧТО делать, но это не становится действием.\n\n"
+        "⚠️ Проблема не в знаниях и не в силе воли: навыки работают, когда их тренируют системно."
     ),
     (
-        "Я помогу понять, где именно у тебя сейчас стоп,\n"
-        "и собрать под это короткий рабочий план.\n\n"
-        "Это не терапия и не диагноз.\n"
-        "Если станет резко тяжело — нажми «🆘 Кризис»."
+        "Здесь тренируем запуск, внимание и возврат без самокритики через попытки 60–120 секунд.\n"
+        "Срыв — часть процесса: возвращаем, а не наказываем.\n\n"
+        "⚠️ Это не терапия и не диагноз. Если чувствуешь опасность или кризис — жми «🆘 Кризис».\n\n"
+        "Дальше выберешь тренера: мягко (Марша), жёстко (Скинни) или логично (Бек)."
     ),
 ]
+
+ASK_NAME_TEXT = "Как тебя зовут? (1 слово)"
 
 # ============================================================
 # 7) SALES & ONBOARDING TEXTS (карта, гарантия, таймеры)
@@ -1219,7 +1244,7 @@ def build_payment_offer(user: dict) -> str:
 
 def morning_checkin_text(trainer_key: str, name: str = "ты") -> str:
     """Утренний check-in: как ты себя чувствуешь?"""
-    return "Доброе утро.\n\nКак ты сейчас?"
+    return f"Доброе утро, {name}.\nКак ты сейчас?"
 
 
 def midday_ping(name: str, trainer_key: str) -> str:
