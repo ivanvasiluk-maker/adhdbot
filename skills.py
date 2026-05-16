@@ -530,6 +530,63 @@ SKILLS_DB = {
         }
     }
 
+
+
+def _profile_type_from_track(track: str) -> str:
+    mapping = {
+        "anxiety": "anxiety",
+        "low_energy": "low_energy",
+        "distractibility": "distractibility",
+        "mixed": "mixed",
+    }
+    return mapping.get((track or "mixed"), "mixed")
+
+
+def _build_trainer_variants(skill_name: str, minimum_action: str) -> dict:
+    return {
+        "marsha": (
+            f"Давай бережно: {skill_name}. Достаточно минимума: {minimum_action}. "
+            "Мы тренируем не идеал, а возврат в действие."
+        ),
+        "skinny": (
+            f"Без лишнего. {skill_name}. Минимум: {minimum_action}. "
+            "Один круг и этого достаточно на сейчас."
+        ),
+        "beck": (
+            f"Протокол: {skill_name}. Минимальное действие: {minimum_action}. "
+            "Цель — повторяемый вход, а не разовый рывок."
+        ),
+    }
+
+
+def _build_real_life_example(skill_name: str, step1: str, minimum_action: str) -> str:
+    first = (step1 or "открыть рабочую задачу").strip()
+    return f"Когда откладываешь реальную задачу, используй «{skill_name}»: {first}. Если тяжело — минимум: {minimum_action}."
+
+
+def _enrich_skill_schema(skill_id: str, skill: dict) -> dict:
+    """Backfill full TZ schema for legacy skills without breaking current content."""
+    s = dict(skill or {})
+    s.setdefault("skill_id", skill_id)
+    s.setdefault("profile_type", _profile_type_from_track(s.get("track")))
+    s.setdefault("when_to_use", s.get("goal") or "Когда сложно начать или удержать действие")
+
+    steps = [x for x in [s.get("step1"), s.get("step2"), s.get("step3")] if x]
+    s.setdefault("steps", steps)
+
+    minimum_action = s.get("minimum") or s.get("micro") or "30 секунд действия"
+    s.setdefault("minimum_action", minimum_action)
+    s.setdefault("real_life_example", _build_real_life_example(s.get("name") or "Навык", s.get("step1") or "", minimum_action))
+
+    s.setdefault("after_question", "Как тебе было?")
+    s.setdefault("if_boring_response", "Скучно — нормально. Навык не обязан вдохновлять. Он должен повторяться.")
+    s.setdefault("if_hard_response", "Ок. Значит, шаг был великоват. В следующий раз режем ещё меньше.")
+    s.setdefault("if_skeptic_response", "Не надо верить. Проверяем не веру, а факт: стал ли доступнее следующий маленький шаг.")
+    s.setdefault("if_failed_response", "Это не провал. Это данные. Значит, вход был слишком тяжёлый. Даем версию ещё меньше.")
+    s.setdefault("coach_feedback", "Ты сделал не всю задачу. Ты потренировал вход в действие.")
+    s.setdefault("trainer_variants", _build_trainer_variants(s.get("name") or "Навык", minimum_action))
+    return s
+
 # === FALLBACK SKILLS (базовые короткие версии) ===
 SKILLS_DB.update({
     "return_no_punish": {
@@ -837,3 +894,7 @@ def format_skill(skill_id: str, trainer_key: str):
     if why:
         parts.append(f"\n🧠 Почему это работает: {why}")
     return "\n".join(parts)
+
+
+# Normalize all skills to full schema required by TZ
+SKILLS_DB = {sid: _enrich_skill_schema(sid, data) for sid, data in SKILLS_DB.items()}
